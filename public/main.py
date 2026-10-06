@@ -5,11 +5,12 @@ import threading
 import warnings
 import io
 import re
+import time
 import urllib.request
 import urllib.parse
 import json
-import textwrap
 import ssl
+import wave
 
 warnings.filterwarnings("ignore")
 
@@ -22,10 +23,13 @@ from transformers import VitsModel, AutoTokenizer
 
 # Matplotlib for visual slide graphics
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for Qt
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
+
+# OpenCV for Camera Gesture Detection
+import cv2
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QRect, QRectF
 from PyQt6.QtWidgets import (
@@ -41,7 +45,7 @@ from PyQt6.QtGui import (
 from google import genai
 from google.genai import types
 
-# Audio playback
+# Audio playback and mic recording
 import sounddevice as sd
 
 
@@ -62,7 +66,7 @@ def get_local_tts():
 
 
 def fetch_online_image(query):
-    """Fetches high-quality educational photos/maps/diagrams from Wikimedia Commons and Wikipedia."""
+    """Fetches high-quality educational photos/maps/diagrams from Wikipedia and Wikimedia Commons."""
     if not query:
         return None
     try:
@@ -70,7 +74,6 @@ def fetch_online_image(query):
         if not clean_q:
             return None
 
-        # Bypass SSL verification issues on local Python environments
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -79,7 +82,7 @@ def fetch_online_image(query):
             'User-Agent': 'EducationalLessonApp/1.0 (student_learning_app@example.org)'
         }
 
-        # 1. Search Wikipedia Page Images (Most reliable for historical topics/WW2/Science)
+        # Search Wikipedia Page Images
         url_wiki = f"https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=pageimages&pithumbsize=1000&format=json"
         req_wiki = urllib.request.Request(url_wiki, headers=headers)
         
@@ -95,7 +98,7 @@ def fetch_online_image(query):
                         if qimg.loadFromData(img_resp.read()):
                             return qimg
 
-        # 2. Search Wikimedia Commons Media Files
+        # Search Wikimedia Commons
         url_commons = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=imageinfo&iiprop=url&iiurlwidth=1000&format=json"
         req_commons = urllib.request.Request(url_commons, headers=headers)
         
@@ -123,24 +126,11 @@ def clean_latex_math(text):
         return ""
     
     replacements = {
-        r'\cdot': '·',
-        r'\times': '×',
-        r'\div': '÷',
-        r'\pm': '±',
-        r'\infty': '∞',
-        r'\pi': 'π',
-        r'\alpha': 'α',
-        r'\beta': 'β',
-        r'\theta': 'θ',
-        r'\le': '≤',
-        r'\leq': '≤',
-        r'\ge': '≥',
-        r'\geq': '≥',
-        r'\neq': '≠',
-        r'\approx': '≈',
-        r'\sqrt': '√',
-        r'\int': '∫',
-        r'\sum': '∑',
+        r'\cdot': '·', r'\times': '×', r'\div': '÷', r'\pm': '±',
+        r'\infty': '∞', r'\pi': 'π', r'\alpha': 'α', r'\beta': 'β',
+        r'\theta': 'θ', r'\le': '≤', r'\leq': '≤', r'\ge': '≥',
+        r'\geq': '≥', r'\neq': '≠', r'\approx': '≈', r'\sqrt': '√',
+        r'\int': '∫', r'\sum': '∑',
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
@@ -167,12 +157,223 @@ def clean_latex_math(text):
     return text
 
 
+def synthesize_single_text_tts(text, speed_factor=1.2):
+    """Generates audio array for a single text chunk with seed locking."""
+    try:
+        if not text:
+            return None, None
+        model, tokenizer = get_local_tts()
+        sample_rate = model.config.sampling_rate
+
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        chunks = []
+        current_chunk = ""
+
+        for s in sentences:
+            if len(current_chunk) + len(s) < 220:
+                current_chunk += " " + s
+            else:
+                if current_chunk.strip():
+                    chunks.append(current_chunk.strip())
+                current_chunk = s
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        audio_segments = []
+        for chunk in chunks:
+            torch.manual_seed(42)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(42)
+
+            inputs = tokenizer(chunk, return_tensors="pt")
+            with torch.no_grad():
+                output = model(**inputs).waveform
+            segment = output.squeeze().cpu().numpy()
+            audio_segments.append(segment)
+
+        if not audio_segments:
+            return None, None
+
+        full_audio = np.concatenate(audio_segments)
+        if len(full_audio) > 0 and speed_factor != 1.0:
+            indices = np.arange(0, len(full_audio), speed_factor)
+            full_audio = np.interp(indices, np.arange(len(full_audio)), full_audio).astype(np.float32)
+
+        return full_audio, sample_rate
+    except Exception as e:
+        print("TTS Synthesis error:", e)
+        return None, None
+
+
 # -------------------------------------------------------------------
-# Worker Thread: Generates Lesson, Visuals, and TTS Audio
+# Background Camera Thread for Hand Gesture Detection
+# -------------------------------------------------------------------
+class CameraThread(QThread):
+    hand_detected_signal = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.enabled = False
+
+    def run(self):
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Notice: Camera not found or inaccessible.")
+            return
+
+        last_trigger = 0
+
+        while self.running:
+            ret, frame = cap.read()
+            if not ret:
+                self.msleep(50)
+                continue
+
+            if self.enabled:
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+                upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+
+                mask = cv2.inRange(hsv, lower_skin, upper_skin)
+                mask = cv2.GaussianBlur(mask, (5, 5), 0)
+                contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+                if contours:
+                    max_contour = max(contours, key=cv2.contourArea)
+                    area = cv2.contourArea(max_contour)
+                    if area > 12000:
+                        now = time.time()
+                        if now - last_trigger > 6:
+                            last_trigger = now
+                            self.hand_detected_signal.emit()
+
+            self.msleep(100)
+        cap.release()
+
+    def stop(self):
+        self.running = False
+        self.wait()
+
+
+# -------------------------------------------------------------------
+# Thread-Safe Audio Playback & Student Q&A Execution
+# -------------------------------------------------------------------
+class PlaybackThread(QThread):
+    update_status_signal = pyqtSignal(str, str)
+    pause_timer_signal = pyqtSignal()
+    resume_timer_signal = pyqtSignal()
+
+    def __init__(self, main_window):
+        super().__init__()
+        self.mw = main_window
+        self.running = True
+
+    def run(self):
+        while self.running and self.mw.current_chunk_idx < len(self.mw.audio_chunks):
+            chunk = self.mw.audio_chunks[self.mw.current_chunk_idx]
+            
+            # Sentence Boundary Hand Interrupt
+            if self.mw.interrupt_requested and not self.mw.is_qa_mode:
+                self.mw.is_qa_mode = True
+                self.pause_timer_signal.emit()
+                self.execute_student_qa_flow()
+                self.mw.interrupt_requested = False
+                self.mw.is_qa_mode = False
+                self.resume_timer_signal.emit()
+                if self.running:
+                    self.update_status_signal.emit("Sapak dowam edýär...", "#4ade80")
+
+            if not self.running:
+                break
+
+            try:
+                sd.play(chunk, self.mw.sample_rate)
+                sd.wait()
+            except Exception as e:
+                print("Audio playback notice:", e)
+
+            self.mw.current_chunk_idx += 1
+
+        if self.running:
+            self.update_status_signal.emit("Sapak tamamlandy!", "#a855f7")
+
+    def execute_student_qa_flow(self):
+        try:
+            self.update_status_signal.emit("Mugallym diňleýär: Soragyňyzy beriň (5 sekunt)...", "#ef4444")
+            duration_sec = 5
+            rec_sample_rate = 16000
+            
+            recording = sd.rec(int(duration_sec * rec_sample_rate), samplerate=rec_sample_rate, channels=1, dtype='int16')
+            sd.wait()
+
+            if not self.running:
+                return
+
+            self.update_status_signal.emit("Soragyňyz AI tarapyndan derňelýär...", "#38bdf8")
+
+            buf = io.BytesIO()
+            with wave.open(buf, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(rec_sample_rate)
+                wf.writeframes(recording.tobytes())
+            audio_bytes = buf.getvalue()
+
+            client = genai.Client(api_key=self.mw.gemini_api_key)
+            prompt_text = (
+                f"Siz {self.mw.subject} mugallymy. Sapak mowzugy: {self.mw.topic}. "
+                "Okuwçy sapak wagtynda goluny galdyryp şu soragy berdi. "
+                "Haýyş, diňe Türkmen dilinde gysga, çalt we düşnükli jogap beriň (1-2 sözlem)."
+            )
+            
+            response = client.models.generate_content(
+                model='gemini-3.5-flash-lite',
+                contents=[
+                    types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                    prompt_text
+                ],
+                config=types.GenerateContentConfig(
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    )
+                )
+            )
+            answer_text = clean_latex_math(response.text)
+
+            if not self.running:
+                return
+
+            self.update_status_signal.emit("Mugallym jogap berýär...", "#a855f7")
+            ans_audio, ans_sr = synthesize_single_text_tts(answer_text, speed_factor=1.2)
+            if ans_audio is not None and self.running:
+                sd.play(ans_audio, ans_sr)
+                sd.wait()
+
+            if not self.running:
+                return
+
+            self.update_status_signal.emit("5 sekuntdan sapak dowam eder...", "#f59e0b")
+            time.sleep(5)
+
+        except Exception as e:
+            print("Q&A Interrupt error:", e)
+            if self.running:
+                self.update_status_signal.emit("Ýalňyşlyk boldy, sapak dowam etdirilýär...", "#f87171")
+                time.sleep(2)
+
+    def stop(self):
+        self.running = False
+        sd.stop()
+        self.wait()
+
+
+# -------------------------------------------------------------------
+# Worker Thread: Generates Lesson, Visuals, and Sentence Audio Chunks
 # -------------------------------------------------------------------
 class LessonGeneratorThread(QThread):
     status_signal = pyqtSignal(str)
-    completed_signal = pyqtSignal(dict, list, object)
+    completed_signal = pyqtSignal(dict, list, list, int)
     error_signal = pyqtSignal(str)
 
     def __init__(self, subject, topic, duration_minutes, api_key):
@@ -194,26 +395,26 @@ class LessonGeneratorThread(QThread):
             target_word_count = max(300, int(self.duration_minutes * 300))
 
             prompt = f"""
-Siz tejribeli mugallym. Sapagyň mowzugy: {self.subject} - {self.topic}.
+Siz mekdepde sapak berýän ýeke-täk, çynlakaý we tejribeli mugallym.
+Sapagyň mowzugy: {self.subject} - {self.topic}.
 Sapagyň dowamlylygy: {self.duration_minutes} minut.
 
 Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňišleýin we düşnükli beriň.
 
 Wajyp düzgünler:
-1. Sapagy örän gyzykly, özüne çekiji, janly we TÄSIRLI ediň!
+1. Sapagyň style-y PODKAST ýa-da IKI ADAMIN GEPLEŞIGI BOLMALY DÄL. Diňe bir mugallymyň monology, sapak düşündirişi bolsun.
 2. Sapagyň dowamlylygy {self.duration_minutes} minut bolany üçin hut {target_slide_count} sany slayd dörediň.
-3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi giňišleýin düşündiriş ýazyň. Gürrüňiň içinde minutlary asla agzamaň.
-4. Her slayd üçin `IMAGE_QUERY` bölüminde real taryhy surat, karta ýa-da illustrasiýa tapmak üçin diňe IŇLISÇE 2-3 sany giňden belli açar sözüni beriň (meselem: "World War 2 Europe map", "Battle of Stalingrad", "Battle of Kursk").
+3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi giňišleýin düşündiriş ýazyň. Sözleri diňe bir Mugallymyň agzyndan çykan ýaly ýazyň. Minutlary agzamaň.
+4. Her slayd üçin `IMAGE_QUERY` bölüminde real taryhy surat, karta ýa-da illustrasiýa tapmak üçin diňe IŇLISÇE 2-3 sany giňden belli açar sözüni beriň.
 5. `GRAPH_CODE` diňe matematika we fizika ýaly takyk ylymlar üçin Matplotlib kody bolsun. Taryh, edebiýat, geografiýa ýaly derslerde GRAPH_CODE-y boş goýuň.
-6. Syýasy tarap tutmaly däl. Temany garaşzys şekilde okatmaly.
-7. Riyazi formulalarda raw LaTeX ulanmaň, ýönekeý Unicode simwollaryny ulanyň.
+6. Riyazi formulalarda raw LaTeX ulanmaň, ýönekeý Unicode simwollaryny ulanyň.
 
-Jogaby tapawutlandyrmak üçin edil aşakdaky ýaly strukturada ýazyň:
+Jogaby tapawutlandyrmak üçin edil ashakdaky yaly strukturada yazyň:
 
 SLIDE_1:
 Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
 Mazmuny:
-- [Tema we öwrediljek zatlara degişli 80 we 170 aralygynda söz]
+- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
 IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
@@ -221,13 +422,13 @@ GRAPH_CODE:
 SLIDE_2:
 Sözbaşy: [2-nji Slaydyň sözbaşysy]
 Mazmuny:
-- [Tema we öwrediljek zatlara degişli 80 we 170 aralygynda söz]
+- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
 IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
 
 FULL_SPEECH:
-[Bu ýerde çagalara aýtjak takmynan {target_word_count} sözden ybarat bolan gürrüňiňizi ýazyň.]
+[Bu ýerde mugallymyň mekdep okuwçylaryna aýtjak takmynan {target_word_count} sözden ybarat bolan durnukly yzygiderli monologyny ýazyň.]
 """
 
             response = client.models.generate_content(
@@ -245,10 +446,10 @@ FULL_SPEECH:
             self.status_signal.emit("Slaydlar we internet suratlary ýüklenýär...")
             slide_pixmaps = self.render_slides_to_pixmaps(parsed_data["slides"])
 
-            self.status_signal.emit("Ses emele getirilýär (TTS 1.2x)...")
-            audio_data, sample_rate = self.generate_tts_local(parsed_data["speech"], speed_factor=1.2)
+            self.status_signal.emit("Ses emele getirilýär (Mugallym Sesi)...")
+            audio_chunks, sample_rate = self.generate_sentence_audio_chunks(parsed_data["speech"])
 
-            self.completed_signal.emit(parsed_data, slide_pixmaps, (audio_data, sample_rate))
+            self.completed_signal.emit(parsed_data, slide_pixmaps, audio_chunks, sample_rate)
 
         except Exception as e:
             self.error_signal.emit(str(e))
@@ -311,7 +512,6 @@ FULL_SPEECH:
         return {"slides": slides, "speech": clean_latex_math(speech)}
 
     def generate_topic_graph(self, graph_code="", slide_title=""):
-        """Executes AI plot code or creates clean infographic visual without naked coordinate axes."""
         fig, ax = plt.subplots(figsize=(5.4, 5.5), dpi=100)
         fig.patch.set_facecolor('#1e293b')
         ax.set_facecolor('#0f172a')
@@ -320,11 +520,8 @@ FULL_SPEECH:
 
         if clean_code:
             local_scope = {
-                'ax': ax, 
-                'np': np, 
-                'plt': plt, 
-                'patches': mpatches, 
-                'mpatches': mpatches
+                'ax': ax, 'np': np, 'plt': plt, 
+                'patches': mpatches, 'mpatches': mpatches
             }
             try:
                 exec(clean_code, {}, local_scope)
@@ -335,7 +532,6 @@ FULL_SPEECH:
                 ax.axis('off')
                 ax.text(0.5, 0.5, slide_title, color='#f8fafc', ha='center', va='center', fontsize=12, fontweight='bold')
         else:
-            # Clean stylized infographic block instead of coordinate grid
             ax.axis('off')
             ax.add_patch(mpatches.FancyBboxPatch((0.1, 0.2), 0.8, 0.6, boxstyle="round,pad=0.05", ec="#38bdf8", fc="#1e293b", lw=2))
             ax.text(0.5, 0.5, slide_title or "Sapak Görseli", color='#f8fafc', ha='center', va='center', fontsize=14, fontweight='bold', wrap=True)
@@ -355,7 +551,6 @@ FULL_SPEECH:
         return image
 
     def render_slides_to_pixmaps(self, slides):
-        """Generates full-card visual slides with online images or clean diagrams."""
         pixmaps = []
         for slide in slides:
             img = QImage(1280, 720, QImage.Format.Format_ARGB32)
@@ -389,7 +584,6 @@ FULL_SPEECH:
             # Right Panel Visual Box
             visual_rect = QRect(700, 100, 545, 580)
             
-            # Fetch real online image from Wikipedia / Wikimedia Commons
             qimg = None
             if slide.get("image_query"):
                 qimg = fetch_online_image(slide["image_query"])
@@ -404,7 +598,6 @@ FULL_SPEECH:
                     Qt.AspectRatioMode.KeepAspectRatio, 
                     Qt.TransformationMode.SmoothTransformation
                 )
-                
                 off_x = visual_rect.x() + (visual_rect.width() - scaled_img.width()) // 2
                 off_y = visual_rect.y() + (visual_rect.height() - scaled_img.height()) // 2
                 
@@ -420,7 +613,6 @@ FULL_SPEECH:
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRoundedRect(QRectF(off_x, off_y, scaled_img.width(), scaled_img.height()), 12, 12)
             else:
-                # Render clean diagram / plot if no internet photo was found
                 graph_img = self.generate_topic_graph(slide.get("graph_code", ""), slide["title"])
                 if not graph_img.isNull():
                     painter.drawImage(visual_rect.x(), visual_rect.y(), graph_img)
@@ -430,51 +622,27 @@ FULL_SPEECH:
 
         return pixmaps
 
-    def generate_tts_local(self, text, speed_factor=1.2):
-        """Generates full speech using chunking at 1.2x speed."""
+    def generate_sentence_audio_chunks(self, text, speed_factor=1.2):
+        """Splits speech into sentence-level chunks so playback can pause at sentence boundaries."""
         try:
             if not text:
-                return None, None
+                return [], 16000
 
             model, tokenizer = get_local_tts()
             sample_rate = model.config.sampling_rate
 
-            sentences = re.split(r'(?<=[.!?])\s+', text)
-            chunks = []
-            current_chunk = ""
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+            audio_chunks = []
 
-            for s in sentences:
-                if len(current_chunk) + len(s) < 220:
-                    current_chunk += " " + s
-                else:
-                    if current_chunk.strip():
-                        chunks.append(current_chunk.strip())
-                    current_chunk = s
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
+            for sentence in sentences:
+                chunk_audio, _ = synthesize_single_text_tts(sentence, speed_factor=speed_factor)
+                if chunk_audio is not None:
+                    audio_chunks.append(chunk_audio)
 
-            audio_segments = []
-
-            for chunk in chunks:
-                inputs = tokenizer(chunk, return_tensors="pt")
-                with torch.no_grad():
-                    output = model(**inputs).waveform
-                segment = output.squeeze().cpu().numpy()
-                audio_segments.append(segment)
-
-            if not audio_segments:
-                return None, None
-
-            full_audio = np.concatenate(audio_segments)
-
-            if len(full_audio) > 0 and speed_factor != 1.0:
-                indices = np.arange(0, len(full_audio), speed_factor)
-                full_audio = np.interp(indices, np.arange(len(full_audio)), full_audio).astype(np.float32)
-
-            return full_audio, sample_rate
+            return audio_chunks, sample_rate
         except Exception as e:
-            print("Local TTS Error:", e)
-            return None, None
+            print("Audio chunking error:", e)
+            return [], 16000
 
 
 # -------------------------------------------------------------------
@@ -494,19 +662,39 @@ class MainWindow(QWidget):
         self.duration_minutes = 10
         self.lesson_data = None
         self.slide_pixmaps = []
+        self.audio_chunks = []
+        self.sample_rate = 16000
         self.current_slide_idx = 0
+        self.current_chunk_idx = 0
+
+        self.interrupt_requested = False
+        self.is_qa_mode = False
 
         self.slide_timer = QTimer(self)
         self.slide_timer.timeout.connect(self.auto_next_slide)
+
+        self.playback_thread = None
 
         self.load_latest_lesson()
         self.init_ui()
         self.showFullScreen()
 
+        # Start Camera Thread
+        self.camera_thread = CameraThread()
+        self.camera_thread.hand_detected_signal.connect(self.on_hand_detected)
+        self.camera_thread.start()
+
         if self.gemini_api_key and "YOUR_GEMINI_API_KEY" not in self.gemini_api_key:
             self.start_ai_generation()
         else:
             self.status_label.setText("Ýalňyşlyk: GEMINI_API_KEY girizilmedik!")
+
+    def closeEvent(self, event):
+        if self.playback_thread:
+            self.playback_thread.stop()
+        if hasattr(self, 'camera_thread') and self.camera_thread:
+            self.camera_thread.stop()
+        super().closeEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -643,6 +831,10 @@ class MainWindow(QWidget):
             }}
         """
 
+    def set_status_ui(self, message, color_hex="#38bdf8"):
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"color: {color_hex}; background: transparent;")
+
     def start_ai_generation(self):
         self.thread = LessonGeneratorThread(
             self.subject, self.topic, self.duration_minutes, self.gemini_api_key
@@ -659,18 +851,25 @@ class MainWindow(QWidget):
         self.status_label.setText(f"Ýalňyşlyk: {err_msg}")
         self.status_label.setStyleSheet("color: #f87171; background: transparent;")
 
-    def on_generation_complete(self, lesson_data, slide_pixmaps, audio_tuple):
-        self.status_label.setText("Sapak başlandy!")
-        self.status_label.setStyleSheet("color: #4ade80; background: transparent;")
+    def on_generation_complete(self, lesson_data, slide_pixmaps, audio_chunks, sample_rate):
+        self.set_status_ui("Sapak başlandy! Kamera taýýar (Gol galdyryp bilersiňiz).", "#4ade80")
 
         self.lesson_data = lesson_data
         self.slide_pixmaps = slide_pixmaps
+        self.audio_chunks = audio_chunks
+        self.sample_rate = sample_rate
         self.current_slide_idx = 0
-        self.display_current_slide()
+        self.current_chunk_idx = 0
 
-        audio_data, sample_rate = audio_tuple
-        if audio_data is not None and sample_rate is not None:
-            threading.Thread(target=self.play_audio, args=(audio_data, sample_rate), daemon=True).start()
+        self.display_current_slide()
+        self.camera_thread.enabled = True
+
+        # Thread-safe playback thread initialization
+        self.playback_thread = PlaybackThread(self)
+        self.playback_thread.update_status_signal.connect(self.set_status_ui)
+        self.playback_thread.pause_timer_signal.connect(self.slide_timer.stop)
+        self.playback_thread.resume_timer_signal.connect(self.display_current_slide)
+        self.playback_thread.start()
 
     def display_current_slide(self):
         if not self.slide_pixmaps:
@@ -699,8 +898,7 @@ class MainWindow(QWidget):
             self.display_current_slide()
         else:
             self.slide_timer.stop()
-            self.status_label.setText("Sapak tamamlandy!")
-            self.status_label.setStyleSheet("color: #a855f7; background: transparent;")
+            self.set_status_ui("Sapak tamamlandy!", "#a855f7")
 
     def next_slide(self):
         if self.slide_pixmaps and self.current_slide_idx < len(self.slide_pixmaps) - 1:
@@ -712,12 +910,11 @@ class MainWindow(QWidget):
             self.current_slide_idx -= 1
             self.display_current_slide()
 
-    def play_audio(self, audio_data, sample_rate):
-        try:
-            sd.play(audio_data, sample_rate)
-            sd.wait()
-        except Exception as e:
-            print("Audio error:", e)
+    def on_hand_detected(self):
+        """Triggered by CameraThread when user raises their hand."""
+        if not self.is_qa_mode and not self.interrupt_requested:
+            self.interrupt_requested = True
+            self.set_status_ui("Gol galdyryldy! Sözlem tamamlanansoň sapak duruzylýar...", "#f59e0b")
 
 
 if __name__ == "__main__":
