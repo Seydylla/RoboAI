@@ -5,6 +5,12 @@ import threading
 import warnings
 import io
 import re
+import urllib.request
+import urllib.parse
+import json
+import textwrap
+import ssl
+
 warnings.filterwarnings("ignore")
 
 from dotenv import load_dotenv
@@ -14,18 +20,22 @@ load_dotenv()
 import torch
 from transformers import VitsModel, AutoTokenizer
 
-# Matplotlib for visual slide graphs
+# Matplotlib for visual slide graphics
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for Qt
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QRect
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QRect, QRectF
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QGraphicsDropShadowEffect, QPushButton
 )
-from PyQt6.QtGui import QColor, QFont, QPalette, QLinearGradient, QBrush, QPixmap, QImage, QPainter, QPen
+from PyQt6.QtGui import (
+    QColor, QFont, QPalette, QLinearGradient, QBrush, 
+    QPixmap, QImage, QPainter, QPen, QPainterPath
+)
 
 # Gemini API Client
 from google import genai
@@ -49,6 +59,62 @@ def get_local_tts():
         LOCAL_TTS_TOKENIZER = AutoTokenizer.from_pretrained(model_name)
         LOCAL_TTS_MODEL = VitsModel.from_pretrained(model_name)
     return LOCAL_TTS_MODEL, LOCAL_TTS_TOKENIZER
+
+
+def fetch_online_image(query):
+    """Fetches high-quality educational photos/maps/diagrams from Wikimedia Commons and Wikipedia."""
+    if not query:
+        return None
+    try:
+        clean_q = re.sub(r'[^a-zA-Z0-9\s]', '', query).strip()
+        if not clean_q:
+            return None
+
+        # Bypass SSL verification issues on local Python environments
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        headers = {
+            'User-Agent': 'EducationalLessonApp/1.0 (student_learning_app@example.org)'
+        }
+
+        # 1. Search Wikipedia Page Images (Most reliable for historical topics/WW2/Science)
+        url_wiki = f"https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=pageimages&pithumbsize=1000&format=json"
+        req_wiki = urllib.request.Request(url_wiki, headers=headers)
+        
+        with urllib.request.urlopen(req_wiki, timeout=5, context=ctx) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            pages = data.get('query', {}).get('pages', {})
+            for page_id, page_info in pages.items():
+                if 'thumbnail' in page_info:
+                    img_url = page_info['thumbnail']['source']
+                    img_req = urllib.request.Request(img_url, headers=headers)
+                    with urllib.request.urlopen(img_req, timeout=5, context=ctx) as img_resp:
+                        qimg = QImage()
+                        if qimg.loadFromData(img_resp.read()):
+                            return qimg
+
+        # 2. Search Wikimedia Commons Media Files
+        url_commons = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=imageinfo&iiprop=url&iiurlwidth=1000&format=json"
+        req_commons = urllib.request.Request(url_commons, headers=headers)
+        
+        with urllib.request.urlopen(req_commons, timeout=5, context=ctx) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            pages = data.get('query', {}).get('pages', {})
+            for page_id, page_info in pages.items():
+                imageinfo = page_info.get('imageinfo', [])
+                if imageinfo:
+                    img_url = imageinfo[0].get('thumburl') or imageinfo[0].get('url')
+                    if img_url and not img_url.endswith('.svg'):
+                        img_req = urllib.request.Request(img_url, headers=headers)
+                        with urllib.request.urlopen(img_req, timeout=5, context=ctx) as img_resp:
+                            qimg = QImage()
+                            if qimg.loadFromData(img_resp.read()):
+                                return qimg
+    except Exception as e:
+        print(f"Online image fetch notice for '{query}':", e)
+    return None
 
 
 def clean_latex_math(text):
@@ -102,7 +168,7 @@ def clean_latex_math(text):
 
 
 # -------------------------------------------------------------------
-# Worker Thread: Generates Lesson, Topic Graphs, and TTS Audio
+# Worker Thread: Generates Lesson, Visuals, and TTS Audio
 # -------------------------------------------------------------------
 class LessonGeneratorThread(QThread):
     status_signal = pyqtSignal(str)
@@ -125,7 +191,7 @@ class LessonGeneratorThread(QThread):
             client = genai.Client(api_key=self.api_key)
 
             target_slide_count = max(2, int(self.duration_minutes * 2))
-            target_word_count = max(600, int(self.duration_minutes * 600))
+            target_word_count = max(300, int(self.duration_minutes * 300))
 
             prompt = f"""
 Siz tejribeli mugallym. Sapagyň mowzugy: {self.subject} - {self.topic}.
@@ -134,27 +200,34 @@ Sapagyň dowamlylygy: {self.duration_minutes} minut.
 Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňišleýin we düşnükli beriň.
 
 Wajyp düzgünler:
-1. Sapagy örän gyzykly, özüne çekiji, janly we TÄSIRLI ediň, hiç hili içgysgyn bolmasyn! (Make really interesting rather than boring).
-2. Sapagyň dowamlylygy {self.duration_minutes} minut bolany üçin hut {target_slide_count} sany slayd dörediň (her minut üçin 2 slayd).
-3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi (her minut üçin 600 söz) giňišleýin düşündiriş ýazyň.
-4. Gürrüňiň içinde minutlary asla agzamaň (meselem: "häzir 1-nji minutda", "2-nji minutdarys", "minut geçdi" diýip AÝTMAŇ!).
-5. Riyazi formulalarda we simwollarda raw LaTeX ($...$, \\cdot, ^{{n}}) ulanmaň! Onuň deregine ýönekeý Unicode simwollaryny ulanyň (x², f'(x), xⁿ, ·, ±, ∫, √, π, ≤, ≥).
+1. Sapagy örän gyzykly, özüne çekiji, janly we TÄSIRLI ediň!
+2. Sapagyň dowamlylygy {self.duration_minutes} minut bolany üçin hut {target_slide_count} sany slayd dörediň.
+3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi giňišleýin düşündiriş ýazyň. Gürrüňiň içinde minutlary asla agzamaň.
+4. Her slayd üçin `IMAGE_QUERY` bölüminde real taryhy surat, karta ýa-da illustrasiýa tapmak üçin diňe IŇLISÇE 2-3 sany giňden belli açar sözüni beriň (meselem: "World War 2 Europe map", "Battle of Stalingrad", "Battle of Kursk").
+5. `GRAPH_CODE` diňe matematika we fizika ýaly takyk ylymlar üçin Matplotlib kody bolsun. Taryh, edebiýat, geografiýa ýaly derslerde GRAPH_CODE-y boş goýuň.
+6. Syýasy tarap tutmaly däl. Temany garaşzys şekilde okatmaly.
+7. Riyazi formulalarda raw LaTeX ulanmaň, ýönekeý Unicode simwollaryny ulanyň.
 
-Jogaby tapawutlandyrmak üçin edil ashakdaky ýaly strukturada ýazyň:
+Jogaby tapawutlandyrmak üçin edil aşakdaky ýaly strukturada ýazyň:
 
 SLIDE_1:
 Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
 Mazmuny:
-- [Täsirli we düşnükli esasy nokat]
-- [Eminlik bilen düşündirilýän ikinji nokat]
+- [Tema we öwrediljek zatlara degişli 80 we 170 aralygynda söz]
+IMAGE_QUERY: [2-3 English Wikipedia search keywords]
+GRAPH_CODE:
+[Diňe Python matplotlib ax kody]
 
 SLIDE_2:
 Sözbaşy: [2-nji Slaydyň sözbaşysy]
 Mazmuny:
-- [Düşündirişler we mysallar]
+- [Tema we öwrediljek zatlara degişli 80 we 170 aralygynda söz]
+IMAGE_QUERY: [2-3 English Wikipedia search keywords]
+GRAPH_CODE:
+[Diňe Python matplotlib ax kody]
 
 FULL_SPEECH:
-[Bu ýerde çagalara aýtjak takmynan {target_word_count} sözden ybarat bolan, örän gyzykly, janly gürrüňiňizi ýazyň. Minutlary sanamaň!]
+[Bu ýerde çagalara aýtjak takmynan {target_word_count} sözden ybarat bolan gürrüňiňizi ýazyň.]
 """
 
             response = client.models.generate_content(
@@ -169,7 +242,7 @@ FULL_SPEECH:
             raw_text = response.text
             parsed_data = self.parse_gemini_output(raw_text)
 
-            self.status_signal.emit("Slaydlar we grafikler döredilýär...")
+            self.status_signal.emit("Slaydlar we internet suratlary ýüklenýär...")
             slide_pixmaps = self.render_slides_to_pixmaps(parsed_data["slides"])
 
             self.status_signal.emit("Ses emele getirilýär (TTS 1.2x)...")
@@ -197,112 +270,83 @@ FULL_SPEECH:
             lines = [line.strip() for line in block.split("\n") if line.strip()]
             title = "Sapak"
             content_lines = []
+            graph_code = ""
+            image_query = ""
+            in_graph_code = False
+
             for line in lines:
                 if line.startswith("Sözbaşy:"):
                     title = clean_latex_math(line.replace("Sözbaşy:", "").strip())
+                    in_graph_code = False
                 elif line.startswith("Mazmuny:"):
+                    in_graph_code = False
+                    continue
+                elif line.startswith("IMAGE_QUERY:"):
+                    image_query = line.replace("IMAGE_QUERY:", "").strip()
+                    in_graph_code = False
+                elif line.startswith("GRAPH_CODE:"):
+                    in_graph_code = True
                     continue
                 else:
-                    content_lines.append(clean_latex_math(line))
+                    if in_graph_code:
+                        graph_code += line + "\n"
+                    else:
+                        content_lines.append(clean_latex_math(line))
 
             slides.append({
                 "title": title, 
-                "content": "\n".join(content_lines)
+                "content": "\n".join(content_lines),
+                "image_query": image_query,
+                "graph_code": graph_code.strip()
             })
 
         if not slides:
-            slides = [{"title": self.subject, "content": self.topic}]
+            slides = [{
+                "title": self.subject, 
+                "content": self.topic, 
+                "image_query": f"{self.subject} {self.topic}",
+                "graph_code": ""
+            }]
 
         return {"slides": slides, "speech": clean_latex_math(speech)}
 
-    def generate_topic_graph(self, slide_index, slide_title=""):
-        """Generates dynamic topic-specific dark-themed plots using Matplotlib."""
-        fig, ax = plt.subplots(figsize=(4.8, 3.8), dpi=100)
+    def generate_topic_graph(self, graph_code="", slide_title=""):
+        """Executes AI plot code or creates clean infographic visual without naked coordinate axes."""
+        fig, ax = plt.subplots(figsize=(5.4, 5.5), dpi=100)
         fig.patch.set_facecolor('#1e293b')
         ax.set_facecolor('#0f172a')
 
-        ax.spines['bottom'].set_color('#334155')
-        ax.spines['top'].set_color('#334155')
-        ax.spines['right'].set_color('#334155')
-        ax.spines['left'].set_color('#334155')
-        ax.tick_params(axis='x', colors='#94a3b8')
-        ax.tick_params(axis='y', colors='#94a3b8')
-        ax.title.set_color('#f8fafc')
+        clean_code = re.sub(r'```python|```', '', graph_code).strip()
 
-        full_topic = (f"{self.topic} {self.subject} {slide_title}").lower()
-
-        # 1. Basic Arithmetic / Addition / Subtraction / Numbers
-        if any(w in full_topic for w in ["goşmak", "aýyrmak", "kópleltmek", "bölmek", "addition", "subtraction", "sum", "plus"]):
-            if slide_index % 2 == 0:
-                ax.axhline(0, color='#94a3b8', linewidth=2)
-                ax.plot([0, 2], [0, 0.5], color='#38bdf8', linewidth=3, label='+2')
-                ax.plot([2, 5], [0.5, 0], color='#4ade80', linewidth=3, label='+3')
-                ax.scatter([0, 2, 5], [0, 0.5, 0], color='#f8fafc', s=60, zorder=5)
-                ax.set_xlim(-1, 7)
-                ax.set_ylim(-0.5, 1)
-                ax.set_yticks([])
-                ax.set_xticks(range(0, 7))
-                ax.set_title("San Okunda Goşmak (2 + 3 = 5)", fontsize=10)
-                ax.legend(facecolor='#1e293b', edgecolor='#334155', labelcolor='#e2e8f0', loc='upper right')
-            else:
-                labels = ['San 1', 'San 2', 'Jemi (Sum)']
-                values = [2, 3, 5]
-                colors = ['#38bdf8', '#a855f7', '#4ade80']
-                bars = ax.bar(labels, values, color=colors, width=0.5)
-                for bar in bars:
-                    yval = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2.0, yval + 0.1, int(yval), ha='center', va='bottom', color='#f8fafc', fontweight='bold')
-                ax.set_ylim(0, 7)
-                ax.set_title("Goşulyjylar we Jemi", fontsize=10)
-            ax.grid(axis='y', color='#334155', linestyle=':', alpha=0.6)
-
-        # 2. Calculus / Derivatives / Integrals
-        elif any(w in full_topic for w in ["kalkulus", "calculus", "önüm", "töreme", "derivative", "integral"]):
-            x = np.linspace(-3, 3, 200)
-            if slide_index % 2 == 0:
-                y1 = x**2
-                y2 = 2*x
-                ax.plot(x, y1, color='#38bdf8', linewidth=2.5, label='f(x) = x²')
-                ax.plot(x, y2, color='#a855f7', linewidth=2, linestyle='--', label="f'(x) = 2x")
-                ax.set_title("Funksiýa we Onuň Önümi", fontsize=10)
-            else:
-                y1 = x**3 - 3*x
-                ax.plot(x, y1, color='#f43f5e', linewidth=2.5, label='f(x) = x³ - 3x')
-                ax.set_title("Kübiki Funksiýa", fontsize=10)
-            ax.legend(facecolor='#1e293b', edgecolor='#334155', labelcolor='#e2e8f0', loc='upper left')
-            ax.grid(True, color='#334155', linestyle=':', alpha=0.6)
-
-        # 3. Trigonometry
-        elif any(w in full_topic for w in ["trigonometriýa", "trigonometry", "sin", "cos", "tan", "burç"]):
-            x = np.linspace(-3, 3, 200)
-            y1 = np.sin(x)
-            y2 = np.cos(x)
-            ax.plot(x, y1, color='#4ade80', linewidth=2.5, label='sin(x)')
-            ax.plot(x, y2, color='#f43f5e', linewidth=2, linestyle='--', label='cos(x)')
-            ax.set_title("Trigonometriýa Grafigi", fontsize=10)
-            ax.legend(facecolor='#1e293b', edgecolor='#334155', labelcolor='#e2e8f0', loc='upper left')
-            ax.grid(True, color='#334155', linestyle=':', alpha=0.6)
-
-        # 4. Computer Science / Programming / IT
-        elif any(w in full_topic for w in ["programlama", "it", "code", "web", "programming", "python", "php", "js"]):
-            categories = ['HTML', 'CSS', 'JS', 'PHP', 'Python']
-            values = [85, 90, 75, 95, 80]
-            ax.bar(categories, values, color=['#38bdf8', '#facc15', '#a855f7', '#4ade80', '#f43f5e'])
-            ax.set_title("Programmalaşdyryş Bilişi (%)", fontsize=10)
-            ax.grid(axis='y', color='#334155', linestyle=':', alpha=0.6)
-
-        # 5. Default General Learning Curve Plot
+        if clean_code:
+            local_scope = {
+                'ax': ax, 
+                'np': np, 
+                'plt': plt, 
+                'patches': mpatches, 
+                'mpatches': mpatches
+            }
+            try:
+                exec(clean_code, {}, local_scope)
+            except Exception as e:
+                print(f"Error executing AI visual code for '{slide_title}':", e)
+                ax.clear()
+                ax.set_facecolor('#0f172a')
+                ax.axis('off')
+                ax.text(0.5, 0.5, slide_title, color='#f8fafc', ha='center', va='center', fontsize=12, fontweight='bold')
         else:
-            x = np.linspace(1, 10, 100)
-            y = np.log(x) * 10
-            ax.plot(x, y, color='#a855f7', linewidth=2.5)
-            ax.fill_between(x, y, color='#a855f7', alpha=0.2)
-            ax.set_title("Sapak Boýunça Bilim Ösüşi", fontsize=10)
-            ax.grid(True, color='#334155', linestyle=':', alpha=0.6)
+            # Clean stylized infographic block instead of coordinate grid
+            ax.axis('off')
+            ax.add_patch(mpatches.FancyBboxPatch((0.1, 0.2), 0.8, 0.6, boxstyle="round,pad=0.05", ec="#38bdf8", fc="#1e293b", lw=2))
+            ax.text(0.5, 0.5, slide_title or "Sapak Görseli", color='#f8fafc', ha='center', va='center', fontsize=14, fontweight='bold', wrap=True)
 
-        plt.tight_layout()
+        try:
+            plt.tight_layout()
+        except Exception:
+            pass
+
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, facecolor=fig.get_facecolor(), transparent=False)
+        plt.savefig(buf, format='png', dpi=100, facecolor=fig.get_facecolor(), bbox_inches='tight')
         plt.close(fig)
         buf.seek(0)
 
@@ -311,35 +355,75 @@ FULL_SPEECH:
         return image
 
     def render_slides_to_pixmaps(self, slides):
-        """Generates slide graphics with wrapped text, clean math chars, and context-matching graphs."""
+        """Generates full-card visual slides with online images or clean diagrams."""
         pixmaps = []
-        for idx, slide in enumerate(slides):
+        for slide in slides:
             img = QImage(1280, 720, QImage.Format.Format_ARGB32)
             img.fill(QColor("#0f172a"))
 
             painter = QPainter(img)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
+            # Card background
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(30, 41, 59, 240)))
-            painter.drawRoundedRect(40, 40, 1200, 640, 20, 20)
+            painter.setBrush(QBrush(QColor(30, 41, 59, 245)))
+            painter.drawRoundedRect(15, 15, 1250, 690, 16, 16)
 
+            # Accent tag
             painter.setBrush(QBrush(QColor(56, 189, 248)))
-            painter.drawRoundedRect(70, 70, 10, 45, 5, 5)
+            painter.drawRoundedRect(35, 35, 8, 42, 4, 4)
 
+            # Slide Title
             painter.setPen(QColor(248, 250, 252))
-            painter.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
-            title_rect = QRect(95, 68, 1100, 50)
+            painter.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+            title_rect = QRect(55, 32, 1180, 50)
             painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, slide["title"])
 
-            painter.setPen(QColor(203, 213, 225))
-            painter.setFont(QFont("Segoe UI", 16))
-            content_rect = QRect(95, 145, 650, 500)
+            # Text Content Area
+            painter.setPen(QColor(226, 232, 240))
+            painter.setFont(QFont("Segoe UI", 15))
+            content_rect = QRect(55, 100, 620, 580)
             painter.drawText(content_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, slide["content"])
 
-            graph_img = self.generate_topic_graph(idx, slide["title"])
-            if not graph_img.isNull():
-                painter.drawImage(760, 150, graph_img)
+            # Right Panel Visual Box
+            visual_rect = QRect(700, 100, 545, 580)
+            
+            # Fetch real online image from Wikipedia / Wikimedia Commons
+            qimg = None
+            if slide.get("image_query"):
+                qimg = fetch_online_image(slide["image_query"])
+            if qimg is None and slide.get("title"):
+                qimg = fetch_online_image(f"{self.topic} {slide['title']}")
+            if qimg is None:
+                qimg = fetch_online_image(self.topic)
+
+            if qimg and not qimg.isNull():
+                scaled_img = qimg.scaled(
+                    visual_rect.size(), 
+                    Qt.AspectRatioMode.KeepAspectRatio, 
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                
+                off_x = visual_rect.x() + (visual_rect.width() - scaled_img.width()) // 2
+                off_y = visual_rect.y() + (visual_rect.height() - scaled_img.height()) // 2
+                
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(off_x, off_y, scaled_img.width(), scaled_img.height()), 12, 12)
+                
+                painter.save()
+                painter.setClipPath(path)
+                painter.drawImage(off_x, off_y, scaled_img)
+                painter.restore()
+
+                painter.setPen(QPen(QColor(51, 65, 85), 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(QRectF(off_x, off_y, scaled_img.width(), scaled_img.height()), 12, 12)
+            else:
+                # Render clean diagram / plot if no internet photo was found
+                graph_img = self.generate_topic_graph(slide.get("graph_code", ""), slide["title"])
+                if not graph_img.isNull():
+                    painter.drawImage(visual_rect.x(), visual_rect.y(), graph_img)
 
             painter.end()
             pixmaps.append(QPixmap.fromImage(img))
@@ -428,6 +512,11 @@ class MainWindow(QWidget):
         if event.key() == Qt.Key.Key_Escape:
             self.close()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.slide_pixmaps:
+            self.display_current_slide()
+
     def load_latest_lesson(self):
         if not os.path.exists(self.db_path):
             return
@@ -454,13 +543,13 @@ class MainWindow(QWidget):
         self.setPalette(palette)
 
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(40, 30, 40, 30)
+        main_layout.setContentsMargins(15, 10, 15, 10)
 
         card = QWidget(self)
         card.setObjectName("GlassCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(30, 20, 30, 20)
-        card_layout.setSpacing(10)
+        card_layout.setContentsMargins(15, 10, 15, 10)
+        card_layout.setSpacing(6)
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(50)
@@ -469,13 +558,13 @@ class MainWindow(QWidget):
         card.setGraphicsEffect(shadow)
 
         self.subject_label = QLabel(self.subject)
-        self.subject_label.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
+        self.subject_label.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
         self.subject_label.setStyleSheet("color: #ffffff; background: transparent;")
         self.subject_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self.subject_label)
 
         self.topic_label = QLabel(f"Mowzuk: {self.topic}")
-        self.topic_label.setFont(QFont("Segoe UI", 14))
+        self.topic_label.setFont(QFont("Segoe UI", 13))
         self.topic_label.setStyleSheet("color: #a855f7; background: transparent; font-weight: 600;")
         self.topic_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self.topic_label)
@@ -493,7 +582,7 @@ class MainWindow(QWidget):
             QLabel {
                 background-color: rgba(15, 23, 42, 0.6);
                 border: none;
-                border-radius: 16px;
+                border-radius: 12px;
             }
         """)
         card_layout.addWidget(self.slide_display, stretch=1)
@@ -507,7 +596,7 @@ class MainWindow(QWidget):
         self.prev_btn.clicked.connect(self.prev_slide)
         
         self.slide_counter = QLabel("Slaýd 0 / 0")
-        self.slide_counter.setStyleSheet("color: #94a3b8; font-size: 15px; font-weight: bold;")
+        self.slide_counter.setStyleSheet("color: #94a3b8; font-size: 14px; font-weight: bold;")
         self.slide_counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.next_btn = QPushButton("Öňe ▶")
@@ -532,9 +621,9 @@ class MainWindow(QWidget):
 
         self.setStyleSheet("""
             QWidget#GlassCard {
-                background-color: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.18);
-                border-radius: 24px;
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 20px;
             }
         """)
 
@@ -588,15 +677,18 @@ class MainWindow(QWidget):
             return
         
         pixmap = self.slide_pixmaps[self.current_slide_idx]
+        target_size = self.slide_display.size()
+        if target_size.width() < 100 or target_size.height() < 100:
+            target_size = QSize(1280, 720)
+
         scaled = pixmap.scaled(
-            self.slide_display.size(), 
+            target_size, 
             Qt.AspectRatioMode.KeepAspectRatio, 
             Qt.TransformationMode.SmoothTransformation
         )
         self.slide_display.setPixmap(scaled)
         self.slide_counter.setText(f"Slaýd {self.current_slide_idx + 1} / {len(self.slide_pixmaps)}")
 
-        # Auto slide timing calculation
         slide_count = max(1, len(self.slide_pixmaps))
         slide_duration_ms = int((self.duration_minutes * 60 * 1000) / slide_count)
         self.slide_timer.start(slide_duration_ms)
