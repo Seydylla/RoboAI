@@ -1,0 +1,19 @@
+# Gemini API Client
+google-genai>=0.1.0
+
+# PyQt6 GUI Framework
+PyQt6>=6.5.0
+
+# PyTorch & Hugging Face Transformers for local TTS
+torch>=2.0.0
+transformers>=4.35.0
+
+# Plotting & Numerical Processing
+matplotlib>=3.7.0
+numpy>=1.24.0
+
+# Audio Playback
+sounddevice>=0.4.6
+
+# Environment Variable Management
+python-dotenv>=1.0.0
