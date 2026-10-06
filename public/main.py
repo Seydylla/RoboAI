@@ -8,6 +8,8 @@ import re
 warnings.filterwarnings("ignore")
 
 # PyTorch & Hugging Face Transformers for local TTS
+from dotenv import load_dotenv
+load_dotenv()
 import torch
 from transformers import VitsModel, AutoTokenizer
 
@@ -402,7 +404,7 @@ class MainWindow(QWidget):
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.db_path = os.path.join(self.base_dir, "database", "lessons.db")
 
-        self.gemini_api_key = "AIzaSyAhTfrlXynCfG40rpi9LHXlxJbq0EEU2mY"
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
 
         self.subject = "Matematika"
         self.topic = "Goşmak"
