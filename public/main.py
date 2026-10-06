@@ -7,9 +7,10 @@ import io
 import re
 warnings.filterwarnings("ignore")
 
-# PyTorch & Hugging Face Transformers for local TTS
 from dotenv import load_dotenv
 load_dotenv()
+
+# PyTorch & Hugging Face Transformers for local TTS
 import torch
 from transformers import VitsModel, AutoTokenizer
 
@@ -123,17 +124,21 @@ class LessonGeneratorThread(QThread):
             self.status_signal.emit("Gemini AI sapagy taýýarlaýar...")
             client = genai.Client(api_key=self.api_key)
 
-            target_slide_count = max(4, min(12, int(self.duration_minutes // 3)))
+            target_slide_count = max(2, int(self.duration_minutes * 2))
+            target_word_count = max(600, int(self.duration_minutes * 600))
 
             prompt = f"""
 Siz tejribeli mugallym. Sapagyň mowzugy: {self.subject} - {self.topic}.
 Sapagyň dowamlylygy: {self.duration_minutes} minut.
 
-Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňişleýin we düşnükli beriň.
-Sapak dowamlylygy {self.duration_minutes} minut bolny üçin azyndan {target_slide_count} sany giňişleýin slayd dörediň.
+Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňišleýin we düşnükli beriň.
 
-Wajyp kätz: Riyazi formulalarda we simwollarda raw LaTeX ($...$, \\cdot, ^{{n}}) ulanmaň! 
-Onuň deregine ýönekeý Unicode simwollaryny ulanyň (mysal üçin: x², f'(x), xⁿ, ·, ±, ∫, √, π, ≤, ≥).
+Wajyp düzgünler:
+1. Sapagy örän gyzykly, özüne çekiji, janly we TÄSIRLI ediň, hiç hili içgysgyn bolmasyn! (Make really interesting rather than boring).
+2. Sapagyň dowamlylygy {self.duration_minutes} minut bolany üçin hut {target_slide_count} sany slayd dörediň (her minut üçin 2 slayd).
+3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi (her minut üçin 600 söz) giňišleýin düşündiriş ýazyň.
+4. Gürrüňiň içinde minutlary asla agzamaň (meselem: "häzir 1-nji minutda", "2-nji minutdarys", "minut geçdi" diýip AÝTMAŇ!).
+5. Riyazi formulalarda we simwollarda raw LaTeX ($...$, \\cdot, ^{{n}}) ulanmaň! Onuň deregine ýönekeý Unicode simwollaryny ulanyň (x², f'(x), xⁿ, ·, ±, ∫, √, π, ≤, ≥).
 
 Jogaby tapawutlandyrmak üçin edil ashakdaky ýaly strukturada ýazyň:
 
@@ -142,16 +147,14 @@ Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
 Mazmuny:
 - [Täsirli we düşnükli esasy nokat]
 - [Eminlik bilen düşündirilýän ikinji nokat]
-- [Goşmaça düşündirişler we mysallar]
 
 SLIDE_2:
 Sözbaşy: [2-nji Slaydyň sözbaşysy]
 Mazmuny:
-- [Aram-aram mysallar we düşündirişler]
-- [Ylymy adalgalaryň ýönekeý manysy]
+- [Düşündirişler we mysallar]
 
 FULL_SPEECH:
-[Bu ýerde çagalara aýtjak giňişleýin gürrüňiňizi ýazyň.]
+[Bu ýerde çagalara aýtjak takmynan {target_word_count} sözden ybarat bolan, örän gyzykly, janly gürrüňiňizi ýazyň. Minutlary sanamaň!]
 """
 
             response = client.models.generate_content(
@@ -169,8 +172,8 @@ FULL_SPEECH:
             self.status_signal.emit("Slaydlar we grafikler döredilýär...")
             slide_pixmaps = self.render_slides_to_pixmaps(parsed_data["slides"])
 
-            self.status_signal.emit("Ses emele getirilýär (TTS 1.3x)...")
-            audio_data, sample_rate = self.generate_tts_local(parsed_data["speech"])
+            self.status_signal.emit("Ses emele getirilýär (TTS 1.2x)...")
+            audio_data, sample_rate = self.generate_tts_local(parsed_data["speech"], speed_factor=1.2)
 
             self.completed_signal.emit(parsed_data, slide_pixmaps, (audio_data, sample_rate))
 
@@ -231,7 +234,6 @@ FULL_SPEECH:
         # 1. Basic Arithmetic / Addition / Subtraction / Numbers
         if any(w in full_topic for w in ["goşmak", "aýyrmak", "kópleltmek", "bölmek", "addition", "subtraction", "sum", "plus"]):
             if slide_index % 2 == 0:
-                # Number Line Addition Visualization (e.g., 2 + 3 = 5)
                 ax.axhline(0, color='#94a3b8', linewidth=2)
                 ax.plot([0, 2], [0, 0.5], color='#38bdf8', linewidth=3, label='+2')
                 ax.plot([2, 5], [0.5, 0], color='#4ade80', linewidth=3, label='+3')
@@ -243,7 +245,6 @@ FULL_SPEECH:
                 ax.set_title("San Okunda Goşmak (2 + 3 = 5)", fontsize=10)
                 ax.legend(facecolor='#1e293b', edgecolor='#334155', labelcolor='#e2e8f0', loc='upper right')
             else:
-                # Addends vs Sum Bar Chart Comparison
                 labels = ['San 1', 'San 2', 'Jemi (Sum)']
                 values = [2, 3, 5]
                 colors = ['#38bdf8', '#a855f7', '#4ade80']
@@ -345,8 +346,8 @@ FULL_SPEECH:
 
         return pixmaps
 
-    def generate_tts_local(self, text, speed_factor=1.3):
-        """Generates full speech using chunking (prevents audio cutoff) at 1.3x speed."""
+    def generate_tts_local(self, text, speed_factor=1.2):
+        """Generates full speech using chunking at 1.2x speed."""
         try:
             if not text:
                 return None, None
@@ -354,7 +355,6 @@ FULL_SPEECH:
             model, tokenizer = get_local_tts()
             sample_rate = model.config.sampling_rate
 
-            # Split text into small sentence chunks (<=220 chars) to prevent model cutoff
             sentences = re.split(r'(?<=[.!?])\s+', text)
             chunks = []
             current_chunk = ""
@@ -383,7 +383,6 @@ FULL_SPEECH:
 
             full_audio = np.concatenate(audio_segments)
 
-            # Apply 1.3x speedup via linear time-stretching interpolation
             if len(full_audio) > 0 and speed_factor != 1.0:
                 indices = np.arange(0, len(full_audio), speed_factor)
                 full_audio = np.interp(indices, np.arange(len(full_audio)), full_audio).astype(np.float32)
@@ -408,7 +407,7 @@ class MainWindow(QWidget):
 
         self.subject = "Matematika"
         self.topic = "Goşmak"
-        self.duration_minutes = 30
+        self.duration_minutes = 10
         self.lesson_data = None
         self.slide_pixmaps = []
         self.current_slide_idx = 0
@@ -597,11 +596,10 @@ class MainWindow(QWidget):
         self.slide_display.setPixmap(scaled)
         self.slide_counter.setText(f"Slaýd {self.current_slide_idx + 1} / {len(self.slide_pixmaps)}")
 
-        if self.lesson_data and "slides" in self.lesson_data:
-            current_slide = self.lesson_data["slides"][self.current_slide_idx]
-            word_count = len(current_slide.get("content", "").split())
-            read_time_ms = 4000 + (word_count * 300)
-            self.slide_timer.start(read_time_ms)
+        # Auto slide timing calculation
+        slide_count = max(1, len(self.slide_pixmaps))
+        slide_duration_ms = int((self.duration_minutes * 60 * 1000) / slide_count)
+        self.slide_timer.start(slide_duration_ms)
 
     def auto_next_slide(self):
         if self.slide_pixmaps and self.current_slide_idx < len(self.slide_pixmaps) - 1:
