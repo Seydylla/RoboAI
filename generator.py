@@ -360,7 +360,7 @@ Jogaby tapawutlandyrmak üçin edil ashakdaky yaly strukturada yazyň:
 SLIDE_1:
 Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
 Mazmuny:
-- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
+- [Tema we öwrediljek zatlara degişli 80 we 180 aralygynda söz]
 IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
@@ -368,7 +368,7 @@ GRAPH_CODE:
 SLIDE_2:
 Sözbaşy: [2-nji Slaydyň sözbaşysy]
 Mazmuny:
-- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
+- [Tema we öwrediljek zatlara degişli 80 we 180 aralygynda söz]
 IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
