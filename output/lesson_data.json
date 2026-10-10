@@ -1,0 +1,43 @@
+{
+  "subject": "History",
+  "topic": "Napeleon Bonaparte",
+  "duration_minutes": 2,
+  "slides": [
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\slides\\slide_0.png",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\slides\\slide_1.png",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\slides\\slide_2.png",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\slides\\slide_3.png"
+  ],
+  "audio_chunks": [
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_0.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_1.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_2.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_3.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_4.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_5.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_6.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_7.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_8.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_9.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_10.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_11.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_12.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_13.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_14.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_15.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_16.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_17.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_18.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_19.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_20.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_21.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_22.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_23.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_24.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_25.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_26.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_27.wav",
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_28.wav"
+  ],
+  "sample_rate": 16000
+}

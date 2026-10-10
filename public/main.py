@@ -6,39 +6,29 @@ import warnings
 import io
 import re
 import time
-import urllib.request
-import urllib.parse
 import json
-import ssl
 import wave
+import numpy as np
 
 warnings.filterwarnings("ignore")
 
 from dotenv import load_dotenv
 load_dotenv()
 
-# PyTorch & Hugging Face Transformers for local TTS
+# PyTorch & Hugging Face Transformers for local TTS (Live Q&A)
 import torch
 from transformers import VitsModel, AutoTokenizer
-
-# Matplotlib for visual slide graphics
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
 
 # OpenCV for Camera Gesture Detection
 import cv2
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QRect, QRectF
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QGraphicsDropShadowEffect, QPushButton
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QPalette, QLinearGradient, QBrush, 
-    QPixmap, QImage, QPainter, QPen, QPainterPath
+    QColor, QFont, QPalette, QLinearGradient, QBrush, QPixmap
 )
 
 # Gemini API Client
@@ -48,76 +38,20 @@ from google.genai import types
 # Audio playback and mic recording
 import sounddevice as sd
 
-
 # -------------------------------------------------------------------
-# Local TTS Lazy Loader & Model Cache
+# Local TTS Lazy Loader & Model Cache for Live Q&A
 # -------------------------------------------------------------------
 LOCAL_TTS_MODEL = None
 LOCAL_TTS_TOKENIZER = None
 
 def get_local_tts():
-    """Loads and caches the local Hugging Face TTS model in memory."""
+    """Loads and caches the local Hugging Face TTS model in memory for live responses."""
     global LOCAL_TTS_MODEL, LOCAL_TTS_TOKENIZER
     if LOCAL_TTS_MODEL is None or LOCAL_TTS_TOKENIZER is None:
         model_name = "facebook/mms-tts-tuk-script_latin"
         LOCAL_TTS_TOKENIZER = AutoTokenizer.from_pretrained(model_name)
         LOCAL_TTS_MODEL = VitsModel.from_pretrained(model_name)
     return LOCAL_TTS_MODEL, LOCAL_TTS_TOKENIZER
-
-
-def fetch_online_image(query):
-    """Fetches high-quality educational photos/maps/diagrams from Wikipedia and Wikimedia Commons."""
-    if not query:
-        return None
-    try:
-        clean_q = re.sub(r'[^a-zA-Z0-9\s]', '', query).strip()
-        if not clean_q:
-            return None
-
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        headers = {
-            'User-Agent': 'EducationalLessonApp/1.0 (student_learning_app@example.org)'
-        }
-
-        # Search Wikipedia Page Images
-        url_wiki = f"https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=pageimages&pithumbsize=1000&format=json"
-        req_wiki = urllib.request.Request(url_wiki, headers=headers)
-        
-        with urllib.request.urlopen(req_wiki, timeout=5, context=ctx) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            pages = data.get('query', {}).get('pages', {})
-            for page_id, page_info in pages.items():
-                if 'thumbnail' in page_info:
-                    img_url = page_info['thumbnail']['source']
-                    img_req = urllib.request.Request(img_url, headers=headers)
-                    with urllib.request.urlopen(img_req, timeout=5, context=ctx) as img_resp:
-                        qimg = QImage()
-                        if qimg.loadFromData(img_resp.read()):
-                            return qimg
-
-        # Search Wikimedia Commons
-        url_commons = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch={urllib.parse.quote(clean_q)}&gsrlimit=5&prop=imageinfo&iiprop=url&iiurlwidth=1000&format=json"
-        req_commons = urllib.request.Request(url_commons, headers=headers)
-        
-        with urllib.request.urlopen(req_commons, timeout=5, context=ctx) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-            pages = data.get('query', {}).get('pages', {})
-            for page_id, page_info in pages.items():
-                imageinfo = page_info.get('imageinfo', [])
-                if imageinfo:
-                    img_url = imageinfo[0].get('thumburl') or imageinfo[0].get('url')
-                    if img_url and not img_url.endswith('.svg'):
-                        img_req = urllib.request.Request(img_url, headers=headers)
-                        with urllib.request.urlopen(img_req, timeout=5, context=ctx) as img_resp:
-                            qimg = QImage()
-                            if qimg.loadFromData(img_resp.read()):
-                                return qimg
-    except Exception as e:
-        print(f"Online image fetch notice for '{query}':", e)
-    return None
 
 
 def clean_latex_math(text):
@@ -158,7 +92,7 @@ def clean_latex_math(text):
 
 
 def synthesize_single_text_tts(text, speed_factor=1.2):
-    """Generates audio array for a single text chunk with seed locking."""
+    """Generates audio array for live Q&A response."""
     try:
         if not text:
             return None, None
@@ -208,6 +142,11 @@ def synthesize_single_text_tts(text, speed_factor=1.2):
 # -------------------------------------------------------------------
 # Background Camera Thread for Hand Gesture Detection
 # -------------------------------------------------------------------
+import mediapipe as mp
+
+# -------------------------------------------------------------------
+# Background Camera Thread for Hand Gesture Detection (Using MediaPipe)
+# -------------------------------------------------------------------
 class CameraThread(QThread):
     hand_detected_signal = pyqtSignal()
 
@@ -222,6 +161,15 @@ class CameraThread(QThread):
             print("Notice: Camera not found or inaccessible.")
             return
 
+        # Initialize MediaPipe Hands
+        mp_hands = mp.solutions.hands
+        hands = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.5
+        )
+
         last_trigger = 0
 
         while self.running:
@@ -231,24 +179,20 @@ class CameraThread(QThread):
                 continue
 
             if self.enabled:
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                lower_skin = np.array([0, 20, 70], dtype=np.uint8)
-                upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+                # Flip frame horizontally for natural interaction and convert BGR to RGB
+                frame_rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+                results = hands.process(frame_rgb)
 
-                mask = cv2.inRange(hsv, lower_skin, upper_skin)
-                mask = cv2.GaussianBlur(mask, (5, 5), 0)
-                contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-                if contours:
-                    max_contour = max(contours, key=cv2.contourArea)
-                    area = cv2.contourArea(max_contour)
-                    if area > 12000:
-                        now = time.time()
-                        if now - last_trigger > 6:
-                            last_trigger = now
-                            self.hand_detected_signal.emit()
+                # Check if a real hand landmark structure is detected
+                if results.multi_hand_landmarks:
+                    now = time.time()
+                    if now - last_trigger > 6:
+                        last_trigger = now
+                        self.hand_detected_signal.emit()
 
             self.msleep(100)
+            
+        hands.close()
         cap.release()
 
     def stop(self):
@@ -369,283 +313,6 @@ class PlaybackThread(QThread):
 
 
 # -------------------------------------------------------------------
-# Worker Thread: Generates Lesson, Visuals, and Sentence Audio Chunks
-# -------------------------------------------------------------------
-class LessonGeneratorThread(QThread):
-    status_signal = pyqtSignal(str)
-    completed_signal = pyqtSignal(dict, list, list, int)
-    error_signal = pyqtSignal(str)
-
-    def __init__(self, subject, topic, duration_minutes, api_key):
-        super().__init__()
-        self.subject = subject
-        self.topic = topic
-        self.duration_minutes = duration_minutes
-        self.api_key = api_key
-
-    def run(self):
-        try:
-            if not self.api_key or "YOUR_GEMINI_API_KEY" in self.api_key:
-                raise ValueError("Gemini API key tapylmady!")
-
-            self.status_signal.emit("Gemini AI sapagy taýýarlaýar...")
-            client = genai.Client(api_key=self.api_key)
-
-            target_slide_count = max(2, int(self.duration_minutes * 2))
-            target_word_count = max(300, int(self.duration_minutes * 300))
-
-            prompt = f"""
-Siz mekdepde sapak berýän ýeke-täk, çynlakaý we tejribeli mugallym.
-Sapagyň mowzugy: {self.subject} - {self.topic}.
-Sapagyň dowamlylygy: {self.duration_minutes} minut.
-
-Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňišleýin we düşnükli beriň.
-
-Wajyp düzgünler:
-1. Sapagyň style-y PODKAST ýa-da IKI ADAMIN GEPLEŞIGI BOLMALY DÄL. Diňe bir mugallymyň monology, sapak düşündirişi bolsun.
-2. Sapagyň dowamlylygy {self.duration_minutes} minut bolany üçin hut {target_slide_count} sany slayd dörediň.
-3. FULL_SPEECH bölüminde edil {target_word_count} söz töweregi giňišleýin düşündiriş ýazyň. Sözleri diňe bir Mugallymyň agzyndan çykan ýaly ýazyň. Minutlary agzamaň.
-4. Her slayd üçin `IMAGE_QUERY` bölüminde real taryhy surat, karta ýa-da illustrasiýa tapmak üçin diňe IŇLISÇE 2-3 sany giňden belli açar sözüni beriň.
-5. `GRAPH_CODE` diňe matematika we fizika ýaly takyk ylymlar üçin Matplotlib kody bolsun. Taryh, edebiýat, geografiýa ýaly derslerde GRAPH_CODE-y boş goýuň.
-6. Riyazi formulalarda raw LaTeX ulanmaň, ýönekeý Unicode simwollaryny ulanyň.
-
-Jogaby tapawutlandyrmak üçin edil ashakdaky yaly strukturada yazyň:
-
-SLIDE_1:
-Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
-Mazmuny:
-- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
-IMAGE_QUERY: [2-3 English Wikipedia search keywords]
-GRAPH_CODE:
-[Diňe Python matplotlib ax kody]
-
-SLIDE_2:
-Sözbaşy: [2-nji Slaydyň sözbaşysy]
-Mazmuny:
-- [Tema we öwrediljek zatlara degişli 50 we 100 aralygynda söz]
-IMAGE_QUERY: [2-3 English Wikipedia search keywords]
-GRAPH_CODE:
-[Diňe Python matplotlib ax kody]
-
-FULL_SPEECH:
-[Bu ýerde mugallymyň mekdep okuwçylaryna aýtjak takmynan {target_word_count} sözden ybarat bolan durnukly yzygiderli monologyny ýazyň.]
-"""
-
-            response = client.models.generate_content(
-                model='gemini-3.5-flash-lite',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                        disable=True
-                    )
-                )
-            )
-            raw_text = response.text
-            parsed_data = self.parse_gemini_output(raw_text)
-
-            self.status_signal.emit("Slaydlar we internet suratlary ýüklenýär...")
-            slide_pixmaps = self.render_slides_to_pixmaps(parsed_data["slides"])
-
-            self.status_signal.emit("Ses emele getirilýär (Mugallym Sesi)...")
-            audio_chunks, sample_rate = self.generate_sentence_audio_chunks(parsed_data["speech"])
-
-            self.completed_signal.emit(parsed_data, slide_pixmaps, audio_chunks, sample_rate)
-
-        except Exception as e:
-            self.error_signal.emit(str(e))
-
-    def parse_gemini_output(self, text):
-        slides = []
-        speech = ""
-
-        if "FULL_SPEECH:" in text:
-            parts = text.split("FULL_SPEECH:")
-            slide_part = parts[0]
-            speech = parts[1].strip()
-        else:
-            slide_part = text
-            speech = text
-
-        slide_blocks = slide_part.split("SLIDE_")
-        for block in slide_blocks[1:]:
-            lines = [line.strip() for line in block.split("\n") if line.strip()]
-            title = "Sapak"
-            content_lines = []
-            graph_code = ""
-            image_query = ""
-            in_graph_code = False
-
-            for line in lines:
-                if line.startswith("Sözbaşy:"):
-                    title = clean_latex_math(line.replace("Sözbaşy:", "").strip())
-                    in_graph_code = False
-                elif line.startswith("Mazmuny:"):
-                    in_graph_code = False
-                    continue
-                elif line.startswith("IMAGE_QUERY:"):
-                    image_query = line.replace("IMAGE_QUERY:", "").strip()
-                    in_graph_code = False
-                elif line.startswith("GRAPH_CODE:"):
-                    in_graph_code = True
-                    continue
-                else:
-                    if in_graph_code:
-                        graph_code += line + "\n"
-                    else:
-                        content_lines.append(clean_latex_math(line))
-
-            slides.append({
-                "title": title, 
-                "content": "\n".join(content_lines),
-                "image_query": image_query,
-                "graph_code": graph_code.strip()
-            })
-
-        if not slides:
-            slides = [{
-                "title": self.subject, 
-                "content": self.topic, 
-                "image_query": f"{self.subject} {self.topic}",
-                "graph_code": ""
-            }]
-
-        return {"slides": slides, "speech": clean_latex_math(speech)}
-
-    def generate_topic_graph(self, graph_code="", slide_title=""):
-        fig, ax = plt.subplots(figsize=(5.4, 5.5), dpi=100)
-        fig.patch.set_facecolor('#1e293b')
-        ax.set_facecolor('#0f172a')
-
-        clean_code = re.sub(r'```python|```', '', graph_code).strip()
-
-        if clean_code:
-            local_scope = {
-                'ax': ax, 'np': np, 'plt': plt, 
-                'patches': mpatches, 'mpatches': mpatches
-            }
-            try:
-                exec(clean_code, {}, local_scope)
-            except Exception as e:
-                print(f"Error executing AI visual code for '{slide_title}':", e)
-                ax.clear()
-                ax.set_facecolor('#0f172a')
-                ax.axis('off')
-                ax.text(0.5, 0.5, slide_title, color='#f8fafc', ha='center', va='center', fontsize=12, fontweight='bold')
-        else:
-            ax.axis('off')
-            ax.add_patch(mpatches.FancyBboxPatch((0.1, 0.2), 0.8, 0.6, boxstyle="round,pad=0.05", ec="#38bdf8", fc="#1e293b", lw=2))
-            ax.text(0.5, 0.5, slide_title or "Sapak Görseli", color='#f8fafc', ha='center', va='center', fontsize=14, fontweight='bold', wrap=True)
-
-        try:
-            plt.tight_layout()
-        except Exception:
-            pass
-
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100, facecolor=fig.get_facecolor(), bbox_inches='tight')
-        plt.close(fig)
-        buf.seek(0)
-
-        image = QImage()
-        image.loadFromData(buf.getvalue())
-        return image
-
-    def render_slides_to_pixmaps(self, slides):
-        pixmaps = []
-        for slide in slides:
-            img = QImage(1280, 720, QImage.Format.Format_ARGB32)
-            img.fill(QColor("#0f172a"))
-
-            painter = QPainter(img)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-            # Card background
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(30, 41, 59, 245)))
-            painter.drawRoundedRect(15, 15, 1250, 690, 16, 16)
-
-            # Accent tag
-            painter.setBrush(QBrush(QColor(56, 189, 248)))
-            painter.drawRoundedRect(35, 35, 8, 42, 4, 4)
-
-            # Slide Title
-            painter.setPen(QColor(248, 250, 252))
-            painter.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-            title_rect = QRect(55, 32, 1180, 50)
-            painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, slide["title"])
-
-            # Text Content Area
-            painter.setPen(QColor(226, 232, 240))
-            painter.setFont(QFont("Segoe UI", 15))
-            content_rect = QRect(55, 100, 620, 580)
-            painter.drawText(content_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, slide["content"])
-
-            # Right Panel Visual Box
-            visual_rect = QRect(700, 100, 545, 580)
-            
-            qimg = None
-            if slide.get("image_query"):
-                qimg = fetch_online_image(slide["image_query"])
-            if qimg is None and slide.get("title"):
-                qimg = fetch_online_image(f"{self.topic} {slide['title']}")
-            if qimg is None:
-                qimg = fetch_online_image(self.topic)
-
-            if qimg and not qimg.isNull():
-                scaled_img = qimg.scaled(
-                    visual_rect.size(), 
-                    Qt.AspectRatioMode.KeepAspectRatio, 
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                off_x = visual_rect.x() + (visual_rect.width() - scaled_img.width()) // 2
-                off_y = visual_rect.y() + (visual_rect.height() - scaled_img.height()) // 2
-                
-                path = QPainterPath()
-                path.addRoundedRect(QRectF(off_x, off_y, scaled_img.width(), scaled_img.height()), 12, 12)
-                
-                painter.save()
-                painter.setClipPath(path)
-                painter.drawImage(off_x, off_y, scaled_img)
-                painter.restore()
-
-                painter.setPen(QPen(QColor(51, 65, 85), 2))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRoundedRect(QRectF(off_x, off_y, scaled_img.width(), scaled_img.height()), 12, 12)
-            else:
-                graph_img = self.generate_topic_graph(slide.get("graph_code", ""), slide["title"])
-                if not graph_img.isNull():
-                    painter.drawImage(visual_rect.x(), visual_rect.y(), graph_img)
-
-            painter.end()
-            pixmaps.append(QPixmap.fromImage(img))
-
-        return pixmaps
-
-    def generate_sentence_audio_chunks(self, text, speed_factor=1.2):
-        """Splits speech into sentence-level chunks so playback can pause at sentence boundaries."""
-        try:
-            if not text:
-                return [], 16000
-
-            model, tokenizer = get_local_tts()
-            sample_rate = model.config.sampling_rate
-
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-            audio_chunks = []
-
-            for sentence in sentences:
-                chunk_audio, _ = synthesize_single_text_tts(sentence, speed_factor=speed_factor)
-                if chunk_audio is not None:
-                    audio_chunks.append(chunk_audio)
-
-            return audio_chunks, sample_rate
-        except Exception as e:
-            print("Audio chunking error:", e)
-            return [], 16000
-
-
-# -------------------------------------------------------------------
 # Main App Window
 # -------------------------------------------------------------------
 class MainWindow(QWidget):
@@ -653,14 +320,17 @@ class MainWindow(QWidget):
         super().__init__()
         
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if not os.path.exists(os.path.join(self.base_dir, "database")):
+            self.base_dir = os.path.dirname(self.base_dir)
+
         self.db_path = os.path.join(self.base_dir, "database", "lessons.db")
+        self.output_dir = os.path.join(self.base_dir, "output")
 
         self.gemini_api_key = os.getenv("GEMINI_API_KEY")
 
         self.subject = "Matematika"
         self.topic = "Goşmak"
         self.duration_minutes = 10
-        self.lesson_data = None
         self.slide_pixmaps = []
         self.audio_chunks = []
         self.sample_rate = 16000
@@ -675,7 +345,6 @@ class MainWindow(QWidget):
 
         self.playback_thread = None
 
-        self.load_latest_lesson()
         self.init_ui()
         self.showFullScreen()
 
@@ -684,10 +353,7 @@ class MainWindow(QWidget):
         self.camera_thread.hand_detected_signal.connect(self.on_hand_detected)
         self.camera_thread.start()
 
-        if self.gemini_api_key and "YOUR_GEMINI_API_KEY" not in self.gemini_api_key:
-            self.start_ai_generation()
-        else:
-            self.status_label.setText("Ýalňyşlyk: GEMINI_API_KEY girizilmedik!")
+        self.load_stored_lesson_output()
 
     def closeEvent(self, event):
         if self.playback_thread:
@@ -705,19 +371,59 @@ class MainWindow(QWidget):
         if self.slide_pixmaps:
             self.display_current_slide()
 
-    def load_latest_lesson(self):
-        if not os.path.exists(self.db_path):
+    def load_stored_lesson_output(self):
+        """Loads pre-generated lesson data, slides, and WAV audio from the output folder."""
+        json_path = os.path.join(self.output_dir, "lesson_data.json")
+        if not os.path.exists(json_path):
+            self.status_label.setText("Ýalňyşlyk: Sapak maglumatlary 'output' papkasynda tapylmady!")
+            self.status_label.setStyleSheet("color: #f87171; background: transparent;")
             return
+
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT subject, topic, duration_minutes FROM lessons ORDER BY id DESC LIMIT 1")
-            row = cursor.fetchone()
-            conn.close()
-            if row:
-                self.subject, self.topic, self.duration_minutes = row[0], row[1], row[2]
-        except sqlite3.Error as e:
-            print("Database error:", e)
+            with open(json_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+
+            self.subject = meta.get("subject", self.subject)
+            self.topic = meta.get("topic", self.topic)
+            self.duration_minutes = meta.get("duration_minutes", self.duration_minutes)
+            self.sample_rate = meta.get("sample_rate", 16000)
+
+            self.subject_label.setText(self.subject)
+            self.topic_label.setText(f"Mowzuk: {self.topic}")
+
+            # Load Slide Images
+            self.slide_pixmaps = []
+            for img_path in meta.get("slides", []):
+                if os.path.exists(img_path):
+                    self.slide_pixmaps.append(QPixmap(img_path))
+
+            # Load Audio Chunks
+            self.audio_chunks = []
+            for wav_path in meta.get("audio_chunks", []):
+                if os.path.exists(wav_path):
+                    with wave.open(wav_path, 'rb') as wf:
+                        frames = wf.readframes(wf.getnframes())
+                        audio_arr = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
+                        self.audio_chunks.append(audio_arr)
+
+            self.set_status_ui("Sapak başlandy! Kamera taýýar (Gol galdyryp bilersiňiz).", "#4ade80")
+
+            self.current_slide_idx = 0
+            self.current_chunk_idx = 0
+
+            self.display_current_slide()
+            self.camera_thread.enabled = True
+
+            # Start Audio Playback Thread
+            self.playback_thread = PlaybackThread(self)
+            self.playback_thread.update_status_signal.connect(self.set_status_ui)
+            self.playback_thread.pause_timer_signal.connect(self.slide_timer.stop)
+            self.playback_thread.resume_timer_signal.connect(self.display_current_slide)
+            self.playback_thread.start()
+
+        except Exception as e:
+            self.status_label.setText(f"Maglumaty ýüklemekde ýalňyşlyk: {e}")
+            self.status_label.setStyleSheet("color: #f87171; background: transparent;")
 
     def init_ui(self):
         self.setWindowTitle("AI Mugallym - Sapak")
@@ -834,42 +540,6 @@ class MainWindow(QWidget):
     def set_status_ui(self, message, color_hex="#38bdf8"):
         self.status_label.setText(message)
         self.status_label.setStyleSheet(f"color: {color_hex}; background: transparent;")
-
-    def start_ai_generation(self):
-        self.thread = LessonGeneratorThread(
-            self.subject, self.topic, self.duration_minutes, self.gemini_api_key
-        )
-        self.thread.status_signal.connect(self.update_status)
-        self.thread.completed_signal.connect(self.on_generation_complete)
-        self.thread.error_signal.connect(self.on_generation_error)
-        self.thread.start()
-
-    def update_status(self, message):
-        self.status_label.setText(message)
-
-    def on_generation_error(self, err_msg):
-        self.status_label.setText(f"Ýalňyşlyk: {err_msg}")
-        self.status_label.setStyleSheet("color: #f87171; background: transparent;")
-
-    def on_generation_complete(self, lesson_data, slide_pixmaps, audio_chunks, sample_rate):
-        self.set_status_ui("Sapak başlandy! Kamera taýýar (Gol galdyryp bilersiňiz).", "#4ade80")
-
-        self.lesson_data = lesson_data
-        self.slide_pixmaps = slide_pixmaps
-        self.audio_chunks = audio_chunks
-        self.sample_rate = sample_rate
-        self.current_slide_idx = 0
-        self.current_chunk_idx = 0
-
-        self.display_current_slide()
-        self.camera_thread.enabled = True
-
-        # Thread-safe playback thread initialization
-        self.playback_thread = PlaybackThread(self)
-        self.playback_thread.update_status_signal.connect(self.set_status_ui)
-        self.playback_thread.pause_timer_signal.connect(self.slide_timer.stop)
-        self.playback_thread.resume_timer_signal.connect(self.display_current_slide)
-        self.playback_thread.start()
 
     def display_current_slide(self):
         if not self.slide_pixmaps:

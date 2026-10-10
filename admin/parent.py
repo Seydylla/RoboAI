@@ -1,6 +1,7 @@
 import sys
 import os
 import sqlite3
+import subprocess
 from PyQt6.QtCore import Qt, QDate, QTime
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -205,6 +206,17 @@ class ParentInputWindow(QWidget):
         """, (subject, topic, start_date, start_time, duration_val))
         conn.commit()
         conn.close()
+
+        # Resolve paths accurately between admin/ and root directory
+        current_dir = os.path.dirname(os.path.abspath(__file__)) # points to admin/
+        root_dir = os.path.dirname(current_dir)                 # points to root directory
+        generator_script = os.path.join(root_dir, "generator.py")
+
+        if os.path.exists(generator_script):
+            # Launch generator.py with its working directory set to the root folder
+            subprocess.Popen([sys.executable, generator_script], cwd=root_dir)
+        else:
+            QMessageBox.warning(self, "Path Error", f"Could not find generator.py at: {generator_script}")
 
         # Close the GUI window immediately upon saving
         self.close()
