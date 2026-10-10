@@ -298,6 +298,17 @@ def main():
     slides_dir = os.path.join(output_dir, "slides")
     audio_dir = os.path.join(output_dir, "audio")
 
+    # Clear previous slides and audio files if they exist
+    for folder in [slides_dir, audio_dir]:
+        if os.path.exists(folder):
+            for file in os.listdir(folder):
+                file_path = os.path.join(folder, file)
+                if os.path.isfile(file_path):
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        print(f"Notice: Could not remove old file {file_path}: {e}")
+
     os.makedirs(slides_dir, exist_ok=True)
     os.makedirs(audio_dir, exist_ok=True)
 
