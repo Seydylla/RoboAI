@@ -235,14 +235,49 @@ def generate_topic_graph(graph_code="", slide_title=""):
 def parse_gemini_output(text, subject, topic):
     slides = []
     speech = ""
+    quiz_questions = []
 
-    if "FULL_SPEECH:" in text:
-        parts = text.split("FULL_SPEECH:")
+    if "QUIZ_QUESTIONS:" in text:
+        parts = text.split("QUIZ_QUESTIONS:")
+        main_part = parts[0]
+        quiz_part = parts[1].strip()
+        
+        # Parse quiz questions
+        q_blocks = quiz_part.split("Q_ITEM:")
+        for qb in q_blocks:
+            if not qb.strip():
+                continue
+            lines = [l.strip() for l in qb.split("\n") if l.strip()]
+            q_text = ""
+            answers = []
+            correct = 0
+            for line in lines:
+                if line.startswith("Text:"):
+                    q_text = clean_latex_math(line.replace("Text:", "").strip())
+                elif line.startswith("Ans:"):
+                    ans_list = eval(line.replace("Ans:", "").strip())
+                    answers = [clean_latex_math(a) for a in ans_list]
+                elif line.startswith("Correct:"):
+                    try:
+                        correct = int(line.replace("Correct:", "").strip())
+                    except ValueError:
+                        correct = 0
+            if q_text and len(answers) == 4:
+                quiz_questions.append({
+                    "question_text": q_text,
+                    "answers": answers,
+                    "correct": correct
+                })
+    else:
+        main_part = text
+
+    if "FULL_SPEECH:" in main_part:
+        parts = main_part.split("FULL_SPEECH:")
         slide_part = parts[0]
         speech = parts[1].strip()
     else:
-        slide_part = text
-        speech = text
+        slide_part = main_part
+        speech = main_part
 
     slide_blocks = slide_part.split("SLIDE_")
     for block in slide_blocks[1:]:
@@ -287,7 +322,7 @@ def parse_gemini_output(text, subject, topic):
             "graph_code": ""
         }]
 
-    return {"slides": slides, "speech": clean_latex_math(speech)}
+    return {"slides": slides, "speech": clean_latex_math(speech), "quiz": quiz_questions}
 
 
 def main():
@@ -316,29 +351,53 @@ def main():
         print("Database not found!")
         return
 
-    # Fetch latest lesson from database
+    # Fetch latest lesson from database and setup quiz tables
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT subject, topic, duration_minutes FROM lessons ORDER BY id DESC LIMIT 1")
+    cursor.execute("SELECT id, subject, topic, duration_minutes FROM lessons ORDER BY id DESC LIMIT 1")
     row = cursor.fetchone()
-    conn.close()
-
+    
     if not row:
+        conn.close()
         print("No lesson record found in database.")
         return
 
-    subject, topic, duration_minutes = row[0], row[1], row[2]
+    lesson_id, subject, topic, duration_minutes = row[0], row[1], row[2], row[3]
+
+    # Ensure quiz and question tables exist and clear previous records
+    cursor.execute('''CREATE TABLE IF NOT EXISTS quizzes (
+        quiz_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lesson_id INTEGER,
+        title TEXT,
+        FOREIGN KEY (lesson_id) REFERENCES lessons(id)
+    )''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS questions (
+        question_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quiz_id INTEGER,
+        question_text TEXT,
+        answers_json TEXT,
+        correct_answer INTEGER,
+        FOREIGN KEY (quiz_id) REFERENCES quizzes(quiz_id)
+    )''')
+    
+    # Clear previous quizzes/questions associated with any lesson
+    cursor.execute("DELETE FROM questions")
+    cursor.execute("DELETE FROM quizzes")
+    conn.commit()
+
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key or "YOUR_GEMINI_API_KEY" in api_key:
+        conn.close()
         print("Error: GEMINI_API_KEY not found!")
         return
 
-    print("Gemini AI sapagy taýýarlaýar...")
-    client = genai.Client(api_key=api_key)
-
     target_slide_count = max(2, int(duration_minutes * 2))
     target_word_count = max(300, int(duration_minutes * 300))
+    target_question_count = max(3, int(duration_minutes * 3))
+
+    print("Gemini AI sapagy we test soraglaryny taýýarlaýar...")
+    client = genai.Client(api_key=api_key)
 
     prompt = f"""
 Siz mekdepde sapak berýän ýeke-täk, çynlakaý we tejribeli mugallym.
@@ -354,8 +413,9 @@ Wajyp düzgünler:
 4. Her slayd üçin `IMAGE_QUERY` bölüminde real taryhy surat, karta ýa-da illustrasiýa tapmak üçin diňe IŇLISÇE 2-3 sany giňden belli açar sözüni beriň.
 5. `GRAPH_CODE` diňe matematika we fizika ýaly takyk ylymlar üçin Matplotlib kody bolsun. Taryh, edebiýat, geografiýa ýaly derslerde GRAPH_CODE-y boş goýuň.
 6. Riyazi formulalarda raw LaTeX ulanmaň, ýönekeý Unicode simwollaryny ulanyň.
+7. Şeýle hem, sapaga degişli takmynan {target_question_count} sany test soragyny dörediň (her minut üçin 3 sorag).
 
-Jogaby tapawutlandyrmak üçin edil ashakdaky yaly strukturada yazyň:
+Jogaby tapawutlandyrmak iň aşakdaky yaly strukturada yazyň:
 
 SLIDE_1:
 Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
@@ -365,16 +425,18 @@ IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
 
-SLIDE_2:
-Sözbaşy: [2-nji Slaydyň sözbaşysy]
-Mazmuny:
-- [Tema we öwrediljek zatlara degişli 80 we 180 aralygynda söz]
-IMAGE_QUERY: [2-3 English Wikipedia search keywords]
-GRAPH_CODE:
-[Diňe Python matplotlib ax kody]
-
 FULL_SPEECH:
 [Bu ýerde mugallymyň mekdep okuwçylaryna aýtjak takmynan {target_word_count} sözden ybarat bolan durnukly yzygiderli monologyny ýazyň.]
+
+QUIZ_QUESTIONS:
+Q_ITEM:
+Text: [Sorag texti]
+Ans: ["A jogap", "B jogap", "C jogap", "D jogap"]
+Correct: [0, 1, 2 ýa-da 3 indeks]
+Q_ITEM:
+Text: [Sorag texti 2]
+Ans: ["A", "B", "C", "D"]
+Correct: [index]
 """
 
     response = client.models.generate_content(
@@ -388,6 +450,15 @@ FULL_SPEECH:
     )
     raw_text = response.text
     parsed_data = parse_gemini_output(raw_text, subject, topic)
+
+    # Save generated quiz and questions into database
+    cursor.execute("INSERT INTO quizzes (lesson_id, title) VALUES (?, ?)", (lesson_id, f"{subject} - {topic} Testi"))
+    quiz_id = cursor.lastrowid
+    for q in parsed_data["quiz"]:
+        cursor.execute("INSERT INTO questions (quiz_id, question_text, answers_json, correct_answer) VALUES (?, ?, ?, ?)",
+                  (quiz_id, q['question_text'], json.dumps(q['answers']), q['correct']))
+    conn.commit()
+    conn.close()
 
     print("Slaydlar we suratlary ýüklenip render edilýär...")
     slide_file_paths = []

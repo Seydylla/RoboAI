@@ -19,8 +19,9 @@ load_dotenv()
 import torch
 from transformers import VitsModel, AutoTokenizer
 
-# OpenCV for Camera Gesture Detection
+# OpenCV & MediaPipe for Camera Gesture & Hand Detection
 import cv2
+import mediapipe as mp
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
 from PyQt6.QtWidgets import (
@@ -140,20 +141,17 @@ def synthesize_single_text_tts(text, speed_factor=1.2):
 
 
 # -------------------------------------------------------------------
-# Background Camera Thread for Hand Gesture Detection
-# -------------------------------------------------------------------
-import mediapipe as mp
-
-# -------------------------------------------------------------------
-# Background Camera Thread for Hand Gesture Detection (Using MediaPipe)
+# Background Camera Thread for Hand Gesture Detection & Quiz Mode
 # -------------------------------------------------------------------
 class CameraThread(QThread):
     hand_detected_signal = pyqtSignal()
+    gesture_detected_signal = pyqtSignal(str, str) # Right gesture, Left gesture
 
     def __init__(self):
         super().__init__()
         self.running = True
         self.enabled = False
+        self.quiz_mode = False
 
     def run(self):
         cap = cv2.VideoCapture(0)
@@ -161,11 +159,10 @@ class CameraThread(QThread):
             print("Notice: Camera not found or inaccessible.")
             return
 
-        # Initialize MediaPipe Hands
         mp_hands = mp.solutions.hands
         hands = mp_hands.Hands(
             static_image_mode=False,
-            max_num_hands=1,
+            max_num_hands=2,
             min_detection_confidence=0.7,
             min_tracking_confidence=0.5
         )
@@ -179,16 +176,48 @@ class CameraThread(QThread):
                 continue
 
             if self.enabled:
-                # Flip frame horizontally for natural interaction and convert BGR to RGB
                 frame_rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
                 results = hands.process(frame_rgb)
 
-                # Check if a real hand landmark structure is detected
-                if results.multi_hand_landmarks:
-                    now = time.time()
-                    if now - last_trigger > 6:
-                        last_trigger = now
-                        self.hand_detected_signal.emit()
+                if not self.quiz_mode:
+                    # Lesson Q&A mode: Check if a hand is raised
+                    if results.multi_hand_landmarks:
+                        now = time.time()
+                        if now - last_trigger > 6:
+                            last_trigger = now
+                            self.hand_detected_signal.emit()
+                else:
+                    # Quiz Gesture Recognition Mode (matching student.py rules)
+                    right_gesture = "None"
+                    left_gesture = "None"
+                    
+                    if results.multi_hand_landmarks and results.multi_handedness:
+                        for i, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                            handedness = results.multi_handedness[i].classification[0].label
+                            landmarks = hand_landmarks.landmark
+                            
+                            def is_up(tip_idx, pip_idx):
+                                return landmarks[tip_idx].y < landmarks[pip_idx].y - 0.02
+
+                            fingers = [
+                                is_up(8, 6),   # Index
+                                is_up(12, 10), # Middle
+                                is_up(16, 14), # Ring
+                                is_up(20, 18)  # Pinky
+                            ]
+                            num_up = sum(fingers)
+                            is_thumb_up = landmarks[4].y < landmarks[3].y - 0.03
+
+                            if handedness == "Right":
+                                if num_up == 1 and fingers[0]: right_gesture = '1'
+                                elif num_up == 2 and fingers[0] and fingers[1]: right_gesture = '2'
+                                elif num_up == 3 and fingers[0] and fingers[1] and fingers[2]: right_gesture = '3'
+                                elif num_up == 4 and all(fingers): right_gesture = '4'
+                            elif handedness == "Left":
+                                if is_thumb_up and num_up == 0: left_gesture = 'accept'
+                                elif num_up == 4 and all(fingers): left_gesture = 'cancel'
+
+                    self.gesture_detected_signal.emit(right_gesture, left_gesture)
 
             self.msleep(100)
             
@@ -207,6 +236,7 @@ class PlaybackThread(QThread):
     update_status_signal = pyqtSignal(str, str)
     pause_timer_signal = pyqtSignal()
     resume_timer_signal = pyqtSignal()
+    lesson_finished_signal = pyqtSignal()
 
     def __init__(self, main_window):
         super().__init__()
@@ -217,7 +247,6 @@ class PlaybackThread(QThread):
         while self.running and self.mw.current_chunk_idx < len(self.mw.audio_chunks):
             chunk = self.mw.audio_chunks[self.mw.current_chunk_idx]
             
-            # Sentence Boundary Hand Interrupt
             if self.mw.interrupt_requested and not self.mw.is_qa_mode:
                 self.mw.is_qa_mode = True
                 self.pause_timer_signal.emit()
@@ -240,7 +269,7 @@ class PlaybackThread(QThread):
             self.mw.current_chunk_idx += 1
 
         if self.running:
-            self.update_status_signal.emit("Sapak tamamlandy!", "#a855f7")
+            self.lesson_finished_signal.emit()
 
     def execute_student_qa_flow(self):
         try:
@@ -337,6 +366,14 @@ class MainWindow(QWidget):
         self.current_slide_idx = 0
         self.current_chunk_idx = 0
 
+        # Quiz mode variables
+        self.quiz_questions = []
+        self.current_quiz_idx = 0
+        self.correct_count = 0
+        self.incorrect_count = 0
+        self.is_quiz_mode = False
+        self.selected_answer_index = None
+
         self.interrupt_requested = False
         self.is_qa_mode = False
 
@@ -351,6 +388,7 @@ class MainWindow(QWidget):
         # Start Camera Thread
         self.camera_thread = CameraThread()
         self.camera_thread.hand_detected_signal.connect(self.on_hand_detected)
+        self.camera_thread.gesture_detected_signal.connect(self.on_gesture_detected)
         self.camera_thread.start()
 
         self.load_stored_lesson_output()
@@ -368,11 +406,10 @@ class MainWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.slide_pixmaps:
+        if self.slide_pixmaps and not self.is_quiz_mode:
             self.display_current_slide()
 
     def load_stored_lesson_output(self):
-        """Loads pre-generated lesson data, slides, and WAV audio from the output folder."""
         json_path = os.path.join(self.output_dir, "lesson_data.json")
         if not os.path.exists(json_path):
             self.status_label.setText("Ýalňyşlyk: Sapak maglumatlary 'output' papkasynda tapylmady!")
@@ -406,6 +443,9 @@ class MainWindow(QWidget):
                         audio_arr = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
                         self.audio_chunks.append(audio_arr)
 
+            # Load Quiz Questions from Database
+            self.load_quiz_from_db()
+
             self.set_status_ui("Sapak başlandy! Kamera taýýar (Gol galdyryp bilersiňiz).", "#4ade80")
 
             self.current_slide_idx = 0
@@ -419,11 +459,34 @@ class MainWindow(QWidget):
             self.playback_thread.update_status_signal.connect(self.set_status_ui)
             self.playback_thread.pause_timer_signal.connect(self.slide_timer.stop)
             self.playback_thread.resume_timer_signal.connect(self.display_current_slide)
+            self.playback_thread.lesson_finished_signal.connect(self.start_gesture_quiz_mode)
             self.playback_thread.start()
 
         except Exception as e:
             self.status_label.setText(f"Maglumaty ýüklemekde ýalňyşlyk: {e}")
             self.status_label.setStyleSheet("color: #f87171; background: transparent;")
+
+    def load_quiz_from_db(self):
+        self.quiz_questions = []
+        if not os.path.exists(self.db_path):
+            return
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT quiz_id FROM quizzes ORDER BY quiz_id DESC LIMIT 1")
+            q_row = cursor.fetchone()
+            if q_row:
+                quiz_id = q_row[0]
+                cursor.execute("SELECT question_text, answers_json, correct_answer FROM questions WHERE quiz_id = ?", (quiz_id,))
+                for row in cursor.fetchall():
+                    self.quiz_questions.append({
+                        "question_text": row[0],
+                        "answers": json.loads(row[1]),
+                        "correct_answer": row[2]
+                    })
+            conn.close()
+        except Exception as e:
+            print("Error loading quiz from database:", e)
 
     def init_ui(self):
         self.setWindowTitle("AI Mugallym - Sapak")
@@ -542,7 +605,7 @@ class MainWindow(QWidget):
         self.status_label.setStyleSheet(f"color: {color_hex}; background: transparent;")
 
     def display_current_slide(self):
-        if not self.slide_pixmaps:
+        if self.is_quiz_mode or not self.slide_pixmaps:
             return
         
         pixmap = self.slide_pixmaps[self.current_slide_idx]
@@ -568,7 +631,6 @@ class MainWindow(QWidget):
             self.display_current_slide()
         else:
             self.slide_timer.stop()
-            self.set_status_ui("Sapak tamamlandy!", "#a855f7")
 
     def next_slide(self):
         if self.slide_pixmaps and self.current_slide_idx < len(self.slide_pixmaps) - 1:
@@ -581,10 +643,67 @@ class MainWindow(QWidget):
             self.display_current_slide()
 
     def on_hand_detected(self):
-        """Triggered by CameraThread when user raises their hand."""
-        if not self.is_qa_mode and not self.interrupt_requested:
+        if not self.is_qa_mode and not self.interrupt_requested and not self.is_quiz_mode:
             self.interrupt_requested = True
             self.set_status_ui("Gol galdyryldy! Sözlem tamamlanansoň sapak duruzylýar...", "#f59e0b")
+
+    def start_gesture_quiz_mode(self):
+        self.slide_timer.stop()
+        self.is_quiz_mode = True
+        self.camera_thread.quiz_mode = True
+        self.current_quiz_idx = 0
+        self.correct_count = 0
+        self.incorrect_count = 0
+
+        if not self.quiz_questions:
+            self.set_status_ui("Sapak tamamlandy! Test soraglary tapylmady.", "#a855f7")
+            return
+
+        self.set_status_ui("Sapak tamamlandy! Kamera Hereketleri arkaly Test başlandy.", "#38bdf8")
+        self.display_quiz_question()
+
+    def display_quiz_question(self):
+        if self.current_quiz_idx >= len(self.quiz_questions):
+            # Show final results
+            total = self.correct_count + self.incorrect_count
+            pct = (self.correct_count / total * 100) if total > 0 else 0
+            res_text = f"Test tamamlandy! Dogry: {self.correct_count}, Nädogry: {self.incorrect_count} ({pct:.1f}%)"
+            self.subject_label.setText("Test Netijesi")
+            self.topic_label.setText(res_text)
+            self.slide_display.setText(f"<h2 style='color: white;'>{res_text}</h2>")
+            self.slide_counter.setText("Netije")
+            return
+
+        q = self.quiz_questions[self.current_quiz_idx]
+        q_text = f"Sorag {self.current_quiz_idx + 1}/{len(self.quiz_questions)}: {q['question_text']}<br><br>"
+        for i, ans in enumerate(q['answers']):
+            q_text += f"<b>{i+1})</b> {ans}&nbsp;&nbsp;&nbsp;&nbsp;"
+        
+        self.slide_display.setText(f"<div style='color: #f8fafc; font-size: 20px; padding: 20px;'>{q_text}</div>")
+        self.slide_counter.setText(f"Test Soragy {self.current_quiz_idx + 1} / {len(self.quiz_questions)}")
+        self.set_status_ui("Sag eliňiz bilen 1-4 barmak görkezip jogap saýlaň. Çep el bilen kabul ediň ('accept').", "#38bdf8")
+
+    def on_gesture_detected(self, right_gesture, left_gesture):
+        if not self.is_quiz_mode or self.current_quiz_idx >= len(self.quiz_questions):
+            return
+
+        if right_gesture in ['1', '2', '3', '4']:
+            self.selected_answer_index = int(right_gesture) - 1
+            q = self.quiz_questions[self.current_quiz_idx]
+            self.set_status_ui(f"Jogap saýlandy: {right_gesture}) {q['answers'][self.selected_answer_index]}. Çep eliňiz bilen tassyklaň.", "#f59e0b")
+
+        if left_gesture == 'accept' and self.selected_answer_index is not None:
+            q = self.quiz_questions[self.current_quiz_idx]
+            if self.selected_answer_index == q['correct_answer']:
+                self.correct_count += 1
+                self.set_status_ui("Dogry jogap!", "#4ade80")
+            else:
+                self.incorrect_count += 1
+                self.set_status_ui("Nädogry jogap!", "#f87171")
+            
+            self.selected_answer_index = None
+            self.current_quiz_idx += 1
+            QTimer.singleShot(1500, self.display_quiz_question)
 
 
 if __name__ == "__main__":

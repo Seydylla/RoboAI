@@ -173,8 +173,8 @@ class EntranceWindow(QWidget):
             self.countdown_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
 
     def launch_main_app(self):
-        """Launches public/main.py and closes the entrance window."""
-        main_script = os.path.join(self.base_dir, "public", "main.py")
+        """Launches main.py and closes the entrance window."""
+        main_script = os.path.join(self.base_dir, "main.py")
         if os.path.exists(main_script):
             subprocess.Popen([sys.executable, main_script])
         else:

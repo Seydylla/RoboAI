@@ -1,6 +1,6 @@
 {
-  "subject": "Computer Sciense",
-  "topic": "Javascript",
+  "subject": "Math",
+  "topic": "Calculus",
   "duration_minutes": 3,
   "slides": [
     "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\slides\\slide_0.png",
@@ -45,12 +45,7 @@
     "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_31.wav",
     "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_32.wav",
     "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_33.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_34.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_35.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_36.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_37.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_38.wav",
-    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_39.wav"
+    "E:\\Project\\Sanly_Cozgut\\2026\\RoboMugalym\\output\\audio\\chunk_34.wav"
   ],
   "sample_rate": 16000
 }
