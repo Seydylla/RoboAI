@@ -26,10 +26,10 @@ import mediapipe as mp
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QGraphicsDropShadowEffect, QPushButton
+    QGraphicsDropShadowEffect, QPushButton, QScrollArea
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QPalette, QLinearGradient, QBrush, QPixmap
+    QColor, QFont, QPalette, QLinearGradient, QBrush, QPixmap, QImage
 )
 
 # Gemini API Client
@@ -144,6 +144,8 @@ def synthesize_single_text_tts(text, speed_factor=1.2):
 # Background Camera Thread for Hand Gesture Detection & Quiz Mode
 # -------------------------------------------------------------------
 class CameraThread(QThread):
+    frame_signal = pyqtSignal(QImage)
+    camera_status_signal = pyqtSignal(str)
     hand_detected_signal = pyqtSignal()
     gesture_detected_signal = pyqtSignal(str, str) # Right gesture, Left gesture
 
@@ -156,7 +158,7 @@ class CameraThread(QThread):
     def run(self):
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            print("Notice: Camera not found or inaccessible.")
+            self.camera_status_signal.emit("Kamera açylmady. Düwmeler arkaly jogap beriň.")
             return
 
         mp_hands = mp.solutions.hands
@@ -172,11 +174,14 @@ class CameraThread(QThread):
         while self.running:
             ret, frame = cap.read()
             if not ret:
-                self.msleep(50)
-                continue
+                self.camera_status_signal.emit("Kamera bilen aragatnaşyk kesildi.")
+                break
 
             if self.enabled:
                 frame_rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+                h, w, _ = frame_rgb.shape
+                if self.quiz_mode:
+                    self.frame_signal.emit(QImage(frame_rgb.data, w, h, frame_rgb.strides[0], QImage.Format.Format_RGB888).copy())
                 results = hands.process(frame_rgb)
 
                 if not self.quiz_mode:
@@ -373,6 +378,9 @@ class MainWindow(QWidget):
         self.incorrect_count = 0
         self.is_quiz_mode = False
         self.selected_answer_index = None
+        self.answer_pending = False
+        self.last_left_gesture = "None"
+        self.last_right_gesture = "None"
 
         self.interrupt_requested = False
         self.is_qa_mode = False
@@ -389,6 +397,8 @@ class MainWindow(QWidget):
         self.camera_thread = CameraThread()
         self.camera_thread.hand_detected_signal.connect(self.on_hand_detected)
         self.camera_thread.gesture_detected_signal.connect(self.on_gesture_detected)
+        self.camera_thread.frame_signal.connect(self.show_camera_frame)
+        self.camera_thread.camera_status_signal.connect(self.camera_label.setText)
         self.camera_thread.start()
 
         self.load_stored_lesson_output()
@@ -544,6 +554,8 @@ class MainWindow(QWidget):
         """)
         card_layout.addWidget(self.slide_display, stretch=1)
 
+        self.build_quiz_panel(card_layout)
+
         # Slide Navigation Controls
         nav_layout = QHBoxLayout()
         
@@ -647,63 +659,151 @@ class MainWindow(QWidget):
             self.interrupt_requested = True
             self.set_status_ui("Gol galdyryldy! Sözlem tamamlanansoň sapak duruzylýar...", "#f59e0b")
 
+    def build_quiz_panel(self, layout):
+        self.quiz_panel = QWidget()
+        row = QHBoxLayout(self.quiz_panel)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        questions = QWidget()
+        left = QVBoxLayout(questions)
+        self.question_label = QLabel()
+        self.question_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.question_label.setWordWrap(True)
+        self.question_label.setStyleSheet("color: #f3e8ff; font-size: 24px; font-weight: bold; padding: 16px;")
+        left.addWidget(self.question_label)
+        self.answer_buttons = []
+        for i in range(4):
+            button = QPushButton()
+            button.setMinimumHeight(76)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            label = QLabel(button)
+            label.setWordWrap(True)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            label.setStyleSheet("color: white; background: transparent; border: none; font-size: 18px;")
+            inner = QVBoxLayout(button)
+            inner.addWidget(label)
+            button.answer_label = label
+            button.clicked.connect(lambda checked=False, index=i: self.select_answer(index))
+            left.addWidget(button)
+            self.answer_buttons.append(button)
+        controls = QHBoxLayout()
+        self.cancel_button = QPushButton("Saýlawy ýatyr")
+        self.confirm_button = QPushButton("Jogaby tassykla")
+        for button in (self.cancel_button, self.confirm_button):
+            button.setStyleSheet(self.btn_style("#a855f7"))
+            controls.addWidget(button)
+        self.cancel_button.clicked.connect(self.clear_answer)
+        self.confirm_button.clicked.connect(self.confirm_answer)
+        left.addLayout(controls)
+        left.addStretch()
+        scroll.setWidget(questions)
+        row.addWidget(scroll, 1)
+        right = QVBoxLayout()
+        self.camera_label = QLabel("Kamera garaşylýar...")
+        self.camera_label.setMinimumSize(240, 180)
+        self.camera_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.camera_label.setStyleSheet("color: #d8b4fe; background: rgba(30, 15, 55, 160); border: 1px solid #7e22ce; border-radius: 18px;")
+        right.addWidget(self.camera_label, 1)
+        self.gesture_label = QLabel("Sag el: 1–4 • Çep el: başam barmak — tassykla, açyk el — ýatyr")
+        self.gesture_label.setWordWrap(True)
+        self.gesture_label.setStyleSheet("color: #d8b4fe; font-size: 16px; padding: 12px;")
+        right.addWidget(self.gesture_label)
+        row.addLayout(right, 1)
+        layout.addWidget(self.quiz_panel, 1)
+        self.quiz_panel.hide()
+
+    def show_camera_frame(self, frame):
+        if self.is_quiz_mode:
+            self.camera_label.setPixmap(QPixmap.fromImage(frame).scaled(
+                self.camera_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+
     def start_gesture_quiz_mode(self):
         self.slide_timer.stop()
         self.is_quiz_mode = True
         self.camera_thread.quiz_mode = True
         self.current_quiz_idx = 0
-        self.correct_count = 0
-        self.incorrect_count = 0
-
-        if not self.quiz_questions:
-            self.set_status_ui("Sapak tamamlandy! Test soraglary tapylmady.", "#a855f7")
-            return
-
-        self.set_status_ui("Sapak tamamlandy! Kamera Hereketleri arkaly Test başlandy.", "#38bdf8")
+        self.correct_count = self.incorrect_count = 0
+        self.slide_display.hide()
+        self.prev_btn.hide()
+        self.next_btn.hide()
+        self.quiz_panel.show()
         self.display_quiz_question()
 
-    def display_quiz_question(self):
-        if self.current_quiz_idx >= len(self.quiz_questions):
-            # Show final results
-            total = self.correct_count + self.incorrect_count
-            pct = (self.correct_count / total * 100) if total > 0 else 0
-            res_text = f"Test tamamlandy! Dogry: {self.correct_count}, Nädogry: {self.incorrect_count} ({pct:.1f}%)"
-            self.subject_label.setText("Test Netijesi")
-            self.topic_label.setText(res_text)
-            self.slide_display.setText(f"<h2 style='color: white;'>{res_text}</h2>")
-            self.slide_counter.setText("Netije")
-            return
+    def refresh_answers(self):
+        for i, button in enumerate(self.answer_buttons):
+            selected = i == self.selected_answer_index
+            bg = "rgba(147, 51, 234, 200)" if selected else "rgba(88, 28, 135, 75)"
+            border = "#e9d5ff" if selected else "#7e22ce"
+            button.setStyleSheet(f"QPushButton {{ background: {bg}; border: 2px solid {border}; border-radius: 14px; padding: 12px; }} QPushButton:hover {{ border-color: #c084fc; }}")
+            button.setEnabled(not self.answer_pending)
+        self.confirm_button.setEnabled(self.selected_answer_index is not None and not self.answer_pending)
+        self.cancel_button.setEnabled(self.selected_answer_index is not None and not self.answer_pending)
 
+    def display_quiz_question(self):
+        self.answer_pending = False
+        self.selected_answer_index = None
+        if self.current_quiz_idx >= len(self.quiz_questions):
+            self.answer_pending = True
+            total = self.correct_count + self.incorrect_count
+            pct = self.correct_count / total * 100 if total else 0
+            self.question_label.setText(f"Test tamamlandy!\nDogry: {self.correct_count}\nNädogry: {self.incorrect_count}\nNetije: {pct:.1f}%" if total else "Test soraglary tapylmady.")
+            for button in self.answer_buttons:
+                button.hide()
+            self.confirm_button.hide()
+            self.cancel_button.hide()
+            self.slide_counter.setText("Netije")
+            self.set_status_ui("Sapak tamamlandy.", "#c084fc")
+            return
         q = self.quiz_questions[self.current_quiz_idx]
-        q_text = f"Sorag {self.current_quiz_idx + 1}/{len(self.quiz_questions)}: {q['question_text']}<br><br>"
-        for i, ans in enumerate(q['answers']):
-            q_text += f"<b>{i+1})</b> {ans}&nbsp;&nbsp;&nbsp;&nbsp;"
-        
-        self.slide_display.setText(f"<div style='color: #f8fafc; font-size: 20px; padding: 20px;'>{q_text}</div>")
-        self.slide_counter.setText(f"Test Soragy {self.current_quiz_idx + 1} / {len(self.quiz_questions)}")
-        self.set_status_ui("Sag eliňiz bilen 1-4 barmak görkezip jogap saýlaň. Çep el bilen kabul ediň ('accept').", "#38bdf8")
+        self.question_label.setText(q['question_text'])
+        for i, button in enumerate(self.answer_buttons):
+            button.answer_label.setText(f"{i+1})  {q['answers'][i]}")
+        self.refresh_answers()
+        self.slide_counter.setText(f"Sorag {self.current_quiz_idx + 1} / {len(self.quiz_questions)}")
+        self.set_status_ui("Jogap saýlaň we tassyklaň.", "#c084fc")
+
+    def select_answer(self, index):
+        if self.answer_pending or not self.is_quiz_mode:
+            return
+        self.selected_answer_index = index
+        self.refresh_answers()
+        self.set_status_ui(f"{index + 1}-nji jogap saýlandy. Tassyklap ýa-da üýtgedip bilersiňiz.", "#d8b4fe")
+
+    def clear_answer(self):
+        if not self.answer_pending:
+            self.selected_answer_index = None
+            self.refresh_answers()
+            self.set_status_ui("Saýlaw ýatyryldy.", "#c084fc")
+
+    def confirm_answer(self):
+        if self.answer_pending or self.selected_answer_index is None:
+            return
+        self.answer_pending = True
+        q = self.quiz_questions[self.current_quiz_idx]
+        correct = self.selected_answer_index == q['correct_answer']
+        self.correct_count += int(correct)
+        self.incorrect_count += int(not correct)
+        self.refresh_answers()
+        self.set_status_ui("Dogry jogap!" if correct else "Nädogry jogap!", "#4ade80" if correct else "#f87171")
+        self.current_quiz_idx += 1
+        QTimer.singleShot(1500, self.display_quiz_question)
 
     def on_gesture_detected(self, right_gesture, left_gesture):
-        if not self.is_quiz_mode or self.current_quiz_idx >= len(self.quiz_questions):
+        # Only new gestures act: holding confirm cannot answer the next question.
+        new_right = right_gesture != self.last_right_gesture
+        new_left = left_gesture != self.last_left_gesture
+        self.last_right_gesture, self.last_left_gesture = right_gesture, left_gesture
+        if not self.is_quiz_mode or self.answer_pending:
             return
-
-        if right_gesture in ['1', '2', '3', '4']:
-            self.selected_answer_index = int(right_gesture) - 1
-            q = self.quiz_questions[self.current_quiz_idx]
-            self.set_status_ui(f"Jogap saýlandy: {right_gesture}) {q['answers'][self.selected_answer_index]}. Çep eliňiz bilen tassyklaň.", "#f59e0b")
-
-        if left_gesture == 'accept' and self.selected_answer_index is not None:
-            q = self.quiz_questions[self.current_quiz_idx]
-            if self.selected_answer_index == q['correct_answer']:
-                self.correct_count += 1
-                self.set_status_ui("Dogry jogap!", "#4ade80")
-            else:
-                self.incorrect_count += 1
-                self.set_status_ui("Nädogry jogap!", "#f87171")
-            
-            self.selected_answer_index = None
-            self.current_quiz_idx += 1
-            QTimer.singleShot(1500, self.display_quiz_question)
+        if new_right and right_gesture in ('1', '2', '3', '4'):
+            self.select_answer(int(right_gesture) - 1)
+        if new_left and left_gesture == 'accept':
+            self.confirm_answer()
+        elif new_left and left_gesture == 'cancel':
+            self.clear_answer()
 
 
 if __name__ == "__main__":
