@@ -37,7 +37,7 @@ class ParentInputWindow(QWidget):
         conn.close()
 
     def init_ui(self):
-        self.setWindowTitle("AI Teacher Setup - Parent Dashboard")
+        self.setWindowTitle("Admin paneli")
         self.setFixedSize(600, 750)
         
         # Background Gradient
@@ -67,13 +67,13 @@ class ParentInputWindow(QWidget):
         card.setGraphicsEffect(shadow)
 
         # Larger Header Title Block
-        title = QLabel("Setup Lesson")
+        title = QLabel("Sapak Başlat")
         title.setFont(QFont("Segoe UI", 28, QFont.Weight.Bold))
         title.setStyleSheet("color: #ffffff; background: transparent;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(title)
 
-        subtitle = QLabel("Configure your child's AI learning session")
+        subtitle = QLabel("Çagaňyzyň sapagyny sazlaň")
         subtitle.setFont(QFont("Segoe UI", 12))
         subtitle.setStyleSheet("color: #94a3b8; background: transparent;")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -82,15 +82,15 @@ class ParentInputWindow(QWidget):
         card_layout.addSpacing(10)
 
         # Subject Input
-        card_layout.addWidget(self.create_label("Subject"))
+        card_layout.addWidget(self.create_label("Sapak"))
         self.subject_input = QLineEdit()
-        self.subject_input.setPlaceholderText("e.g. Math, IT, Science")
+        self.subject_input.setPlaceholderText("Matematika, Informatika we ş.m")
         card_layout.addWidget(self.subject_input)
 
         # Topic Input
-        card_layout.addWidget(self.create_label("Topic"))
+        card_layout.addWidget(self.create_label("Tema"))
         self.topic_input = QLineEdit()
-        self.topic_input.setPlaceholderText("e.g. Calculus, Fractions, Web Dev")
+        self.topic_input.setPlaceholderText("Funksiýalar, tor ulgamlary we ş.m")
         card_layout.addWidget(self.topic_input)
 
         # Date & Time Row (Standard Manual Input)
@@ -98,14 +98,14 @@ class ParentInputWindow(QWidget):
         dt_layout.setSpacing(15)
 
         date_box = QVBoxLayout()
-        date_box.addWidget(self.create_label("Start Date"))
+        date_box.addWidget(self.create_label("Başlaýan Senesi"))
         self.date_input = QLineEdit()
         self.date_input.setText(QDate.currentDate().toString("yyyy-MM-dd"))
         self.date_input.setPlaceholderText("YYYY-MM-DD")
         date_box.addWidget(self.date_input)
 
         time_box = QVBoxLayout()
-        time_box.addWidget(self.create_label("Start Time"))
+        time_box.addWidget(self.create_label("Başlaýan wagty"))
         self.time_input = QLineEdit()
         self.time_input.setText(QTime.currentTime().toString("HH:mm"))
         self.time_input.setPlaceholderText("HH:MM")
@@ -116,16 +116,16 @@ class ParentInputWindow(QWidget):
         card_layout.addLayout(dt_layout)
 
         # Duration Input (Standard Manual Input)
-        card_layout.addWidget(self.create_label("Duration (minutes)"))
+        card_layout.addWidget(self.create_label("Dowamlylygy (minut)"))
         self.duration_input = QLineEdit()
-        self.duration_input.setText("30")
-        self.duration_input.setPlaceholderText("e.g. 30")
+        self.duration_input.setText("15")
+        self.duration_input.setPlaceholderText("meselem 15")
         card_layout.addWidget(self.duration_input)
 
         card_layout.addSpacing(15)
 
         # Submit Button
-        self.submit_btn = QPushButton("Start AI Lesson")
+        self.submit_btn = QPushButton("Sapak döret")
         self.submit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.submit_btn.clicked.connect(self.save_to_db)
         card_layout.addWidget(self.submit_btn)
@@ -189,13 +189,13 @@ class ParentInputWindow(QWidget):
         duration = self.duration_input.text().strip()
 
         if not subject or not topic or not start_date or not start_time or not duration:
-            QMessageBox.warning(self, "Input Error", "Please fill in all fields before starting.")
+            QMessageBox.warning(self, "Ýalňyşlyk", "Hemme öýjikleri doldyryň.")
             return
 
         try:
             duration_val = int(duration)
         except ValueError:
-            QMessageBox.warning(self, "Input Error", "Duration must be a valid number.")
+            QMessageBox.warning(self, "Ýaňyşlyk", "Dowamylyga san giriziň")
             return
 
         conn = sqlite3.connect(self.db_path)

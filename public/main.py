@@ -278,7 +278,7 @@ class PlaybackThread(QThread):
 
     def execute_student_qa_flow(self):
         try:
-            self.update_status_signal.emit("Mugallym diňleýär: Soragyňyzy beriň (5 sekunt)...", "#ef4444")
+            self.update_status_signal.emit("Mugallym diňleýär: Soragyňyzy beriň...", "#ef4444")
             duration_sec = 5
             rec_sample_rate = 16000
             
@@ -288,7 +288,7 @@ class PlaybackThread(QThread):
             if not self.running:
                 return
 
-            self.update_status_signal.emit("Soragyňyz AI tarapyndan derňelýär...", "#38bdf8")
+            self.update_status_signal.emit("Soragyňyz mugalym tarapyndan pikirlenilýär...", "#38bdf8")
 
             buf = io.BytesIO()
             with wave.open(buf, 'wb') as wf:
@@ -331,7 +331,7 @@ class PlaybackThread(QThread):
             if not self.running:
                 return
 
-            self.update_status_signal.emit("5 sekuntdan sapak dowam eder...", "#f59e0b")
+            self.update_status_signal.emit("Sapak dowam etdirilýär...", "#f59e0b")
             time.sleep(5)
 
         except Exception as e:
@@ -456,7 +456,7 @@ class MainWindow(QWidget):
             # Load Quiz Questions from Database
             self.load_quiz_from_db()
 
-            self.set_status_ui("Sapak başlandy! Kamera taýýar (Gol galdyryp bilersiňiz).", "#4ade80")
+            self.set_status_ui("Sapak başlandy! Düşünmedik ýagdaýyňyzda eliňizi galdyryp bilersiňiz.", "#4ade80")
 
             self.current_slide_idx = 0
             self.current_chunk_idx = 0
@@ -496,10 +496,10 @@ class MainWindow(QWidget):
                     })
             conn.close()
         except Exception as e:
-            print("Error loading quiz from database:", e)
+            print("Test maglumatlary ýüklemekde ýalňyşlyk:", e)
 
     def init_ui(self):
-        self.setWindowTitle("AI Mugallym - Sapak")
+        self.setWindowTitle("Mugallym - Sapak")
         self.setAutoFillBackground(True)
         palette = self.palette()
         gradient = QLinearGradient(0, 0, 1920, 1080)
@@ -657,7 +657,7 @@ class MainWindow(QWidget):
     def on_hand_detected(self):
         if not self.is_qa_mode and not self.interrupt_requested and not self.is_quiz_mode:
             self.interrupt_requested = True
-            self.set_status_ui("Gol galdyryldy! Sözlem tamamlanansoň sapak duruzylýar...", "#f59e0b")
+            self.set_status_ui("El galdyryldy! Sözlem tamamlanansoň sapak duruzylýar...", "#f59e0b")
 
     def build_quiz_panel(self, layout):
         self.quiz_panel = QWidget()

@@ -188,7 +188,7 @@ def synthesize_single_text_tts(text, speed_factor=1.2):
 
         return full_audio, sample_rate
     except Exception as e:
-        print("TTS Synthesis error:", e)
+        print("TTS ýalňyşlygy:", e)
         return None, None
 
 
@@ -207,7 +207,7 @@ def generate_topic_graph(graph_code="", slide_title=""):
         try:
             exec(clean_code, {}, local_scope)
         except Exception as e:
-            print(f"Error executing AI visual code for '{slide_title}':", e)
+            print(f"Şu sahypa üçin ýalňyşlyk '{slide_title}':", e)
             ax.clear()
             ax.set_facecolor('#0f172a')
             ax.axis('off')
@@ -400,9 +400,11 @@ def main():
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-Siz mekdepde sapak berýän ýeke-täk, çynlakaý we tejribeli mugallym.
+Siz mekdepde sapak berýän tejribeli mugallym.
 Sapagyň mowzugy: {subject} - {topic}.
 Sapagyň dowamlylygy: {duration_minutes} minut.
+Öziň barada hiç zat aýtma.
+Sapakda näme etmelidigi ýa-da akylly otyr diýip sapaga degişli däl zatlary aýtma.
 
 Haýyş, ähli jogaby diňe Türkmen dilinde (Latyn elipbiýinde) doly, giňišleýin we düşnükli beriň.
 
@@ -420,7 +422,7 @@ Jogaby tapawutlandyrmak iň aşakdaky yaly strukturada yazyň:
 SLIDE_1:
 Sözbaşy: [1-nji Slaydyň gysga sözbaşysy]
 Mazmuny:
-- [Tema we öwrediljek zatlara degişli 80 we 180 aralygynda söz]
+- [Tema we öwrediljek zatlara degişli 150 we 180 aralygynda söz]
 IMAGE_QUERY: [2-3 English Wikipedia search keywords]
 GRAPH_CODE:
 [Diňe Python matplotlib ax kody]
@@ -567,7 +569,7 @@ Correct: [index]
     with open(json_output_path, "w", encoding="utf-8") as f:
         json.dump(output_meta, f, ensure_ascii=False, indent=2)
 
-    print("Generasiýa üstünlikli tamamlandy!")
+    print("Sapak üstünlikli taýarlanyldy!")
 
 if __name__ == "__main__":
     main()

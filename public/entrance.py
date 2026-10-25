@@ -174,7 +174,7 @@ class EntranceWindow(QWidget):
 
     def launch_main_app(self):
         """Launches main.py and closes the entrance window."""
-        main_script = os.path.join(self.base_dir, "main.py")
+        main_script = os.path.join(self.base_dir, "public/main.py")
         if os.path.exists(main_script):
             subprocess.Popen([sys.executable, main_script])
         else:
