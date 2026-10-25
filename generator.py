@@ -194,8 +194,8 @@ def synthesize_single_text_tts(text, speed_factor=1.2):
 
 def generate_topic_graph(graph_code="", slide_title=""):
     fig, ax = plt.subplots(figsize=(5.4, 5.5), dpi=100)
-    fig.patch.set_facecolor('#1e293b')
-    ax.set_facecolor('#0f172a')
+    fig.patch.set_facecolor('#FFFFFF') # Match slide card white background
+    ax.set_facecolor('#F8F9F6')        # Match light inner panel color
 
     clean_code = re.sub(r'```python|```', '', graph_code).strip()
 
@@ -467,29 +467,30 @@ Correct: [index]
 
     for i, slide in enumerate(parsed_data["slides"]):
         img = QImage(1280, 720, QImage.Format.Format_ARGB32)
-        img.fill(QColor("#0f172a"))
+        img.fill(QColor("#F5F5F1"))
 
+        # QPainter-i 'with' blogy arkaly ulanmak ýalňyşlygy aýyrýar
         painter = QPainter(img)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         # Card background
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(30, 41, 59, 245)))
+        painter.setPen(QPen(QColor("#E3E6DF"), 1))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
         painter.drawRoundedRect(15, 15, 1250, 690, 16, 16)
 
         # Accent tag
-        painter.setBrush(QBrush(QColor(56, 189, 248)))
+        painter.setBrush(QBrush(QColor(49, 89, 75)))
         painter.drawRoundedRect(35, 35, 8, 42, 4, 4)
 
         # Slide Title
-        painter.setPen(QColor(248, 250, 252))
+        painter.setPen(QColor("#202D25"))
         painter.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
         title_rect = QRect(55, 32, 1180, 50)
         painter.drawText(title_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, slide["title"])
 
         # Text Content Area
-        painter.setPen(QColor(226, 232, 240))
+        painter.setPen(QColor("#35423B"))
         painter.setFont(QFont("Segoe UI", 15))
         content_rect = QRect(55, 100, 620, 580)
         painter.drawText(content_rect, Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, slide["content"])
@@ -530,6 +531,7 @@ Correct: [index]
             if not graph_img.isNull():
                 painter.drawImage(visual_rect.x(), visual_rect.y(), graph_img)
 
+        # Sureksiz ýagdaý bolmaz ýaly painter hökman jemlenmeli
         painter.end()
 
         slide_path = os.path.join(slides_dir, f"slide_{i}.png")

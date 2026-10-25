@@ -3,21 +3,69 @@ import os
 import sqlite3
 import subprocess
 from datetime import datetime
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QVariantAnimation, QEasingCurve, QRectF
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, 
-    QGraphicsDropShadowEffect
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QGraphicsDropShadowEffect,
 )
-from PyQt6.QtGui import QColor, QFont, QPalette, QLinearGradient, QBrush
+from PyQt6.QtGui import QColor, QPainter, QPen
+
+
+class CountdownLabel(QLabel):
+    """A quiet border pulse on each tick; the digits remain fully readable."""
+
+    def __init__(self, parent=None):
+        super().__init__("00:00:00", parent)
+        self._pulse = 0.0
+        self.setObjectName("Countdown")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(116)
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(650)
+        self._animation.setStartValue(1.0)
+        self._animation.setEndValue(0.0)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._animation.valueChanged.connect(self._set_pulse)
+
+    def _set_pulse(self, value):
+        self._pulse = float(value)
+        self.update()
+
+    def setText(self, text):
+        changed = text != self.text()
+        super().setText(text)
+        if changed and hasattr(self, "_animation"):
+            self._animation.stop()
+            if ":" in text:
+                self._animation.start()
+            else:
+                self._set_pulse(0.0)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        resting, active = QColor("#DDE6DC"), QColor("#91B09A")
+        border = QColor(*[
+            round(a + (b - a) * self._pulse)
+            for a, b in zip(resting.getRgb()[:3], active.getRgb()[:3])
+        ])
+        painter.setPen(QPen(border, 1.2))
+        painter.setBrush(QColor("#F3F7F1"))
+        painter.drawRoundedRect(
+            QRectF(self.rect()).adjusted(1, 1, -1, -1), 12, 12
+        )
+        painter.end()
+        super().paintEvent(event)
+
 
 class EntranceWindow(QWidget):
     def __init__(self):
         super().__init__()
-        
-        # Base project directory
+
+        # Base project directory: retain the original folder convention.
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.db_path = os.path.join(self.base_dir, "database", "lessons.db")
-        
+
         self.subject = "No Lesson Scheduled"
         self.topic = ""
         self.target_datetime = None
@@ -36,8 +84,8 @@ class EntranceWindow(QWidget):
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT subject, topic, start_date, start_time, duration_minutes 
-                FROM lessons 
+                SELECT subject, topic, start_date, start_time, duration_minutes
+                FROM lessons
                 ORDER BY id DESC LIMIT 1
             """)
             row = cursor.fetchone()
@@ -50,7 +98,6 @@ class EntranceWindow(QWidget):
                 time_str = row[3]
                 self.duration_minutes = row[4]
 
-                # Parse date and time into datetime object
                 dt_str = f"{date_str} {time_str}"
                 try:
                     self.target_datetime = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
@@ -62,89 +109,110 @@ class EntranceWindow(QWidget):
     def init_ui(self):
         self.setWindowTitle("AI Teacher - Lesson Entrance")
         self.setFixedSize(600, 750)
+        self.setObjectName("EntranceWindow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
-        # Background Gradient
-        self.setAutoFillBackground(True)
-        palette = self.palette()
-        gradient = QLinearGradient(0, 0, 600, 750)
-        gradient.setColorAt(0.0, QColor("#0f172a"))
-        gradient.setColorAt(0.5, QColor("#1e1b4b"))
-        gradient.setColorAt(1.0, QColor("#311042"))
-        palette.setBrush(QPalette.ColorRole.Window, QBrush(gradient))
-        self.setPalette(palette)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(36, 30, 36, 30)
+        main_layout.setSpacing(18)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(40, 40, 40, 40)
+        top_row = QHBoxLayout()
+        brand = QLabel("Okuw")
+        brand.setObjectName("Brand")
+        top_row.addWidget(brand)
+        top_row.addStretch()
+        section = QLabel("Lesson entrance")
+        section.setObjectName("Section")
+        top_row.addWidget(section)
+        main_layout.addLayout(top_row)
 
-        # Glassmorphic Card Container
         card = QWidget(self)
-        card.setObjectName("GlassCard")
+        card.setObjectName("Card")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(35, 45, 35, 45)
-        card_layout.setSpacing(20)
+        card_layout.setContentsMargins(32, 36, 32, 32)
+        card_layout.setSpacing(0)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(40)
-        shadow.setColor(QColor(0, 0, 0, 120))
-        shadow.setOffset(0, 10)
+        shadow = QGraphicsDropShadowEffect(card)
+        shadow.setBlurRadius(24)
+        shadow.setColor(QColor(32, 45, 38, 18))
+        shadow.setOffset(0, 5)
         card.setGraphicsEffect(shadow)
 
-        # Subject Title (H1 Size)
+        eyebrow = QLabel("YOUR LESSON")
+        eyebrow.setObjectName("Eyebrow")
+        card_layout.addWidget(eyebrow)
+        card_layout.addSpacing(14)
+
         self.subject_label = QLabel(self.subject)
-        self.subject_label.setFont(QFont("Segoe UI", 32, QFont.Weight.Bold))
-        self.subject_label.setStyleSheet("color: #ffffff; background: transparent;")
-        self.subject_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subject_label.setObjectName("Subject")
+        self.subject_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.subject_label.setWordWrap(True)
         card_layout.addWidget(self.subject_label)
 
-        # Topic Subtitle
         if self.topic:
+            card_layout.addSpacing(12)
             self.topic_label = QLabel(f"Topic: {self.topic}")
-            self.topic_label.setFont(QFont("Segoe UI", 13))
-            self.topic_label.setStyleSheet("color: #a855f7; background: transparent; font-weight: 600;")
-            self.topic_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.topic_label.setObjectName("Topic")
+            self.topic_label.setTextFormat(Qt.TextFormat.PlainText)
+            self.topic_label.setWordWrap(True)
             card_layout.addWidget(self.topic_label)
 
-        card_layout.addSpacing(15)
+        card_layout.addStretch(1)
+        card_layout.addSpacing(28)
 
-        # Countdown Section Heading
         countdown_heading = QLabel("TIME REMAINING TO START")
-        countdown_heading.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        countdown_heading.setStyleSheet("color: #94a3b8; background: transparent; letter-spacing: 1px;")
+        countdown_heading.setObjectName("CountdownHeading")
         countdown_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(countdown_heading)
+        card_layout.addSpacing(14)
 
-        # Countdown Display Box
-        self.countdown_label = QLabel("00:00:00")
-        self.countdown_label.setFont(QFont("Segoe UI", 36, QFont.Weight.Bold))
-        self.countdown_label.setStyleSheet("""
-            color: #38bdf8;
-            background-color: rgba(0, 0, 0, 0.25);
-            border: 1px solid rgba(56, 189, 248, 0.3);
-            border-radius: 15px;
-            padding: 15px;
-        """)
-        self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.countdown_label = CountdownLabel()
         card_layout.addWidget(self.countdown_label)
+        card_layout.addSpacing(20)
 
-        card_layout.addSpacing(15)
-
-        # Duration Display
-        self.duration_label = QLabel(f"Lesson Duration: {self.duration_minutes} minutes")
-        self.duration_label.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
-        self.duration_label.setStyleSheet("color: #e2e8f0; background: transparent;")
+        self.duration_label = QLabel(
+            f"Lesson Duration: {self.duration_minutes} minutes"
+        )
+        self.duration_label.setObjectName("Duration")
+        self.duration_label.setWordWrap(True)
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(self.duration_label)
+        card_layout.addStretch(1)
 
-        main_layout.addWidget(card)
-        self.setLayout(main_layout)
+        main_layout.addWidget(card, 1)
 
-        # Glassmorphism Styling
         self.setStyleSheet("""
-            QWidget#GlassCard {
-                background-color: rgba(255, 255, 255, 0.07);
-                border: 1px solid rgba(255, 255, 255, 0.18);
-                border-radius: 20px;
+            QWidget#EntranceWindow { background: #F5F5F1; }
+            QWidget#Card {
+                background: #FFFFFF;
+                border: 1px solid #E3E6DF;
+                border-radius: 16px;
             }
+            QLabel {
+                background: transparent; color: #35423B;
+                font-family: 'Segoe UI'; font-size: 14px;
+            }
+            QLabel#Brand {
+                color: #31594B; font-size: 19px; font-weight: 700;
+            }
+            QLabel#Section { color: #747E76; font-size: 12px; }
+            QLabel#Eyebrow {
+                color: #748176; font-size: 11px; font-weight: 600;
+            }
+            QLabel#Subject {
+                color: #202D25; font-size: 32px; font-weight: 600;
+            }
+            QLabel#Topic { color: #728077; font-size: 15px; }
+            QLabel#CountdownHeading {
+                color: #778078; font-size: 11px; font-weight: 600;
+            }
+            QLabel#Countdown {
+                color: #31594B; font-family: 'Consolas', 'DejaVu Sans Mono';
+                font-size: 42px; font-weight: 600;
+                background: transparent; border: none;
+            }
+            QLabel#Duration { color: #728077; font-size: 13px; }
         """)
 
     def start_countdown_timer(self):
@@ -179,8 +247,9 @@ class EntranceWindow(QWidget):
             subprocess.Popen([sys.executable, main_script])
         else:
             print(f"File not found: {main_script}")
-        
+
         self.close()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
