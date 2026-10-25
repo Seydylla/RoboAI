@@ -787,7 +787,8 @@ class MainWindow(QWidget):
         self.correct_count += int(correct)
         self.incorrect_count += int(not correct)
         self.refresh_answers()
-        self.set_status_ui("Dogry jogap!" if correct else "Nädogry jogap!", "#4ade80" if correct else "#f87171")
+        # Keep correctness private until every question has been confirmed.
+        self.set_status_ui("Jogabyňyz kabul edildi.", "#c084fc")
         self.current_quiz_idx += 1
         QTimer.singleShot(1500, self.display_quiz_question)
 
