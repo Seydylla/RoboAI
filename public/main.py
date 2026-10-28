@@ -126,6 +126,7 @@ class CameraThread(QThread):
     camera_status_signal = pyqtSignal(str)
     hand_detected_signal = pyqtSignal()
     gesture_detected_signal = pyqtSignal(str, str)
+    face_detected_signal = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -138,11 +139,16 @@ class CameraThread(QThread):
         if not cap.isOpened():
             self.camera_status_signal.emit("Kamera açylmady. Düwmeler arkaly jogap beriň.")
             return
+        
         mp_hands = mp.solutions.hands
         hands = mp_hands.Hands(
             static_image_mode=False, max_num_hands=2,
             min_detection_confidence=0.7, min_tracking_confidence=0.5,
         )
+
+        mp_face_detection = mp.solutions.face_detection
+        face_detection = mp_face_detection.FaceDetection(model_selection=0, min_detection_confidence=0.7)
+
         last_trigger = 0
         while self.running:
             ret, frame = cap.read()
@@ -152,11 +158,18 @@ class CameraThread(QThread):
             if self.enabled:
                 frame_rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
                 h, w, _ = frame_rgb.shape
+
+                # Face Detection Check
+                face_results = face_detection.process(frame_rgb)
+                is_face_present = bool(face_results.detections)
+                self.face_detected_signal.emit(is_face_present)
+
                 if self.quiz_mode:
                     self.frame_signal.emit(QImage(
                         frame_rgb.data, w, h, frame_rgb.strides[0],
                         QImage.Format.Format_RGB888,
                     ).copy())
+                
                 results = hands.process(frame_rgb)
                 if not self.quiz_mode:
                     if results.multi_hand_landmarks:
@@ -195,6 +208,7 @@ class CameraThread(QThread):
                     self.gesture_detected_signal.emit(right_gesture, left_gesture)
             self.msleep(100)
         hands.close()
+        face_detection.close()
         cap.release()
 
     def stop(self):
@@ -215,6 +229,11 @@ class PlaybackThread(QThread):
 
     def run(self):
         while self.running and self.mw.current_chunk_idx < len(self.mw.audio_chunks):
+            # Check if face is present; if not, wait loop
+            while self.running and not self.mw.face_detected:
+                self.update_status_signal.emit("Ýüz ýüze tapylmady! Sapak garaşýar...", "#ef4444")
+                time.sleep(0.5)
+
             chunk = self.mw.audio_chunks[self.mw.current_chunk_idx]
             if self.mw.interrupt_requested and not self.mw.is_qa_mode:
                 self.mw.is_qa_mode = True
@@ -260,7 +279,9 @@ class PlaybackThread(QThread):
             prompt_text = (
                 f"Siz {self.mw.subject} mugallymy. Sapak mowzugy: {self.mw.topic}. "
                 "Okuwçy sapak wagtynda goluny galdyryp şu soragy berdi. "
-                "Haýyş, diňe Türkmen dilinde gysga, çalt we düşnükli jogap beriň (1-2 sözlem)."
+                "Ilki bilen berlen soragyň şu sapak mowzugyna ({self.mw.topic}) gönüden-göni degişli ýa-da dälledigini barlaň. "
+                "Eger sorag şu sapağa ýa-da mowzugyna degişli däl bolsa, hökman diňe şu sözleri aýdyň: 'Seniň soragyň tema degişli däl'. "
+                "Eger tema degişli bolsa, diňe Türkmen dilinde gysga, çalt we düşnükli jogap beriň (1-2 sözlem)."
             )
             response = client.models.generate_content(
                 model='gemini-3.5-flash-lite',
@@ -293,7 +314,6 @@ class PlaybackThread(QThread):
         self.wait()
 
 
-# Built-in light theme and button animations (no companion module required).
 STATUS_COLORS = {
     "#4ade80": "#31594B",
     "#38bdf8": "#286482",
@@ -315,8 +335,6 @@ def _mix(first, second, progress):
 
 
 class _ButtonStyle(QObject):
-    """Animate paint colors without changing geometry or click handling."""
-
     def __init__(self, button, role="secondary"):
         super().__init__(button)
         self.button = button
@@ -364,7 +382,6 @@ class _ButtonStyle(QObject):
         else:
             base, hover, text, border = "#FFFFFF", "#EEF3EC", "#35463B", "#DDE3DA"
         if not self.button.isEnabled():
-            # Selected answers retain their outline while confirmation is pending.
             base = "#E8F1E9" if self.selected else "#F2F3F0"
             hover = base
             text = "#48604E" if self.selected else "#8A928B"
@@ -415,17 +432,25 @@ class MainWindow(QWidget):
         self.last_right_gesture = "None"
         self.interrupt_requested = False
         self.is_qa_mode = False
+        self.face_detected = False
+        self.initial_face_wait_passed = False
+
         self.slide_timer = QTimer(self)
         self.slide_timer.timeout.connect(self.auto_next_slide)
         self.playback_thread = None
         self.init_ui()
         self.showFullScreen()
+        
         self.camera_thread = CameraThread()
         self.camera_thread.hand_detected_signal.connect(self.on_hand_detected)
         self.camera_thread.gesture_detected_signal.connect(self.on_gesture_detected)
         self.camera_thread.frame_signal.connect(self.show_camera_frame)
         self.camera_thread.camera_status_signal.connect(self.camera_label.setText)
+        self.camera_thread.face_detected_signal.connect(self.on_face_detected)
         self.camera_thread.start()
+        
+        # Enable camera immediately for startup face check
+        self.camera_thread.enabled = True
         self.load_stored_lesson_output()
 
     def closeEvent(self, event):
@@ -444,6 +469,12 @@ class MainWindow(QWidget):
         if self.slide_pixmaps and not self.is_quiz_mode:
             self.display_current_slide()
 
+    def on_face_detected(self, detected):
+        self.face_detected = detected
+        if not self.initial_face_wait_passed and detected:
+            self.initial_face_wait_passed = True
+            self.set_status_ui("Sapak başlandy! Düşünmedik ýagdaýyňyzda eliňizi galdyryp bilersiňiz.", "#4ade80")
+
     def load_stored_lesson_output(self):
         json_path = os.path.join(self.output_dir, "lesson_data.json")
         if not os.path.exists(json_path):
@@ -457,7 +488,6 @@ class MainWindow(QWidget):
             self.duration_minutes = meta.get("duration_minutes", self.duration_minutes)
             self.sample_rate = meta.get("sample_rate", 16000)
             self.subject_label.setText(self.subject)
-            self.topic_label.setText(f"Mowzuk: {self.topic}")
             self.slide_pixmaps = []
             for img_path in meta.get("slides", []):
                 if os.path.exists(img_path):
@@ -470,11 +500,14 @@ class MainWindow(QWidget):
                         audio_arr = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
                         self.audio_chunks.append(audio_arr)
             self.load_quiz_from_db()
-            self.set_status_ui("Sapak başlandy! Düşünmedik ýagdaýyňyzda eliňizi galdyryp bilersiňiz.", "#4ade80")
+            
+            # Wait for face detection before confirming start
+            self.set_status_ui("Okuwçynyň ýüzi garaşylýar... Kameranyň öňüne geçiň.", "#ef4444")
+            
             self.current_slide_idx = 0
             self.current_chunk_idx = 0
             self.display_current_slide()
-            self.camera_thread.enabled = True
+            
             self.playback_thread = PlaybackThread(self)
             self.playback_thread.update_status_signal.connect(self.set_status_ui)
             self.playback_thread.pause_timer_signal.connect(self.slide_timer.stop)
@@ -586,7 +619,6 @@ class MainWindow(QWidget):
         return button
 
     def btn_style(self, color_hex):
-        """Light-mode static button styling, retained for compatibility."""
         color = STATUS_COLORS.get(color_hex.lower(), color_hex)
         return f"""
             QPushButton {{ background: #FFFFFF; color: {color}; border: 1px solid #DDE3DA;
@@ -606,11 +638,9 @@ class MainWindow(QWidget):
         if self.is_quiz_mode or not self.slide_pixmaps:
             return
         pixmap = self.slide_pixmaps[self.current_slide_idx]
-        
-        # Use contentsRect() to get the actual stable interior size of the display label
         target_size = self.slide_display.contentsRect().size()
         if target_size.width() < 100 or target_size.height() < 100:
-            target_size = QSize(960, 540)  # Safe default fallback size
+            target_size = QSize(960, 540)
 
         scaled = pixmap.scaled(
             target_size, Qt.AspectRatioMode.KeepAspectRatio,
@@ -623,7 +653,7 @@ class MainWindow(QWidget):
         self.slide_timer.start(slide_duration_ms)
 
     def auto_next_slide(self):
-        if self.slide_pixmaps and self.current_slide_idx < len(self.slide_pixmaps) - 1:
+        if self.face_detected and self.slide_pixmaps and self.current_slide_idx < len(self.slide_pixmaps) - 1:
             self.current_slide_idx += 1
             self.display_current_slide()
         else:
@@ -783,13 +813,11 @@ class MainWindow(QWidget):
         self.correct_count += int(correct)
         self.incorrect_count += int(not correct)
         self.refresh_answers()
-        # Keep correctness private until every question has been confirmed.
         self.set_status_ui("Jogabyňyz kabul edildi.", "#c084fc")
         self.current_quiz_idx += 1
         QTimer.singleShot(1500, self.display_quiz_question)
 
     def on_gesture_detected(self, right_gesture, left_gesture):
-        # Only new gestures act: holding confirm cannot answer the next question.
         new_right = right_gesture != self.last_right_gesture
         new_left = left_gesture != self.last_left_gesture
         self.last_right_gesture, self.last_left_gesture = right_gesture, left_gesture

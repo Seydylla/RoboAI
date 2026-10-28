@@ -393,7 +393,7 @@ def main():
         return
 
     target_slide_count = max(2, int(duration_minutes * 2))
-    target_word_count = max(300, int(duration_minutes * 300))
+    target_word_count = max(180, int(duration_minutes * 180))
     target_question_count = max(3, int(duration_minutes * 3))
 
     print("Gemini AI sapagy we test soraglaryny taýýarlaýar...")
